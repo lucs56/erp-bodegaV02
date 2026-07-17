@@ -1,0 +1,20 @@
+export type StockImportItem={materialCode:string;materialName:string;category:string;quantity:number;unit:string};
+export type StockImportResult={items:StockImportItem[];errors:string[];includedRows:number;excludedRows:number};
+const VALID_DEPOTS=new Set(["2","C18","R18","2OB"]);
+const aliases={materialCode:["codigo","codigo insumo","codigo material","material","sku"],materialName:["descripcion","descripcion insumo","insumo","nombre"],category:["tipo","categoria","familia"],quantity:["stock","cantidad","existencia","disponible","stock disponible"],unit:["unidad","um","unidad medida"]}as const;
+function normalize(value:unknown){return String(value??"").trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[_./-]+/g," ").replace(/\s+/g," ")}
+function valueFor(row:Record<string,unknown>,names:readonly string[]){return Object.entries(row).find(([key])=>names.includes(normalize(key)))?.[1]}
+function numericValue(value:unknown){if(typeof value==="number")return value;const clean=String(value??"").trim().replace(/\s/g,"");if(!clean)return Number.NaN;const normalized=clean.includes(",")&&clean.includes(".")?(clean.lastIndexOf(",")>clean.lastIndexOf(".")?clean.replace(/\./g,"").replace(",","."):clean.replace(/,/g,"")):clean.replace(",", ".");return Number(normalized)}
+function reportValue(row:Record<string,unknown>,header:string){return Object.entries(row).find(([key])=>normalize(key)===normalize(header))?.[1]}
+function inferCategory(description:string){const text=normalize(description).toUpperCase();if(text.includes("TAPON"))return"Tapones";if(text.includes("TAPA"))return"Tapas";if(text.includes("CAP"))return"Cápsulas";return"Otros"}
+
+export function parseStockRows(rows:Record<string,unknown>[]):StockImportResult{
+  const isBarcodeReport=rows.some(row=>reportValue(row,"Producto")!==undefined&&reportValue(row,"Cant")!==undefined&&reportValue(row,"Deposito")!==undefined);
+  if(isBarcodeReport){
+    const byCode=new Map<string,StockImportItem>();let includedRows=0,excludedRows=0;const errors:string[]=[];
+    rows.forEach((row,index)=>{const materialCode=String(reportValue(row,"Producto")??"").trim(),materialName=String(reportValue(row,"Descripcion")??"").trim(),depot=String(reportValue(row,"Deposito")??"").trim().toUpperCase(),status=normalize(reportValue(row,"Estado")),quantity=numericValue(reportValue(row,"Cant"));if(!materialCode&&!materialName)return;if(!VALID_DEPOTS.has(depot)||status==="vencido"){excludedRows++;return}if(!Number.isFinite(quantity)||quantity<0){errors.push(`Fila ${index+2}: cantidad inválida para ${materialCode||"producto sin código"}.`);return}if(!materialCode||!materialName){errors.push(`Fila ${index+2}: falta Producto o Descripción.`);return}const current=byCode.get(materialCode);byCode.set(materialCode,{materialCode,materialName,category:inferCategory(materialName),quantity:(current?.quantity??0)+quantity,unit:"unidad"});includedRows++});
+    return{items:[...byCode.values()],errors,includedRows,excludedRows};
+  }
+  const errors:string[]=[];const byCode=new Map<string,StockImportItem>();let includedRows=0;
+  rows.forEach((row,index)=>{const line=index+2,materialCode=String(valueFor(row,aliases.materialCode)??"").trim(),materialName=String(valueFor(row,aliases.materialName)??"").trim(),quantity=numericValue(valueFor(row,aliases.quantity));if(!materialCode&&!materialName&&!Number.isFinite(quantity))return;if(!materialCode){errors.push(`Fila ${line}: falta el código.`);return}if(!materialName){errors.push(`Fila ${line}: falta la descripción.`);return}if(!Number.isFinite(quantity)||quantity<0){errors.push(`Fila ${line}: el stock debe ser un número igual o mayor que cero.`);return}const item={materialCode,materialName,quantity,category:String(valueFor(row,aliases.category)??"Otros").trim()||"Otros",unit:String(valueFor(row,aliases.unit)??"unidad").trim()||"unidad"};if(byCode.has(materialCode))errors.push(`Fila ${line}: el código ${materialCode} está repetido; se usará la última fila.`);byCode.set(materialCode,item);includedRows++});return{items:[...byCode.values()],errors,includedRows,excludedRows:0};
+}

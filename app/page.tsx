@@ -1359,7 +1359,7 @@ export default function Home() {
                     </span>
                     <div>
                       <span>
-                         Fraccionamiento · {weeks.length} {weeks.length === 1 ? "semana" : "semanas"}
+                         Fraccionamiento · Total semanas 
                       </span>
                       <strong>{formatNumber(totalFractionBottles)}</strong>
                       <small>botellas programadas</small>

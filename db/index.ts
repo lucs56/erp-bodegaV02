@@ -74,6 +74,11 @@ async function ensureSchema(database: D1Database) {
 }
 
 export async function getDb() {
+  const database = await getD1Database();
+  return drizzle(database, { schema });
+}
+
+export async function getD1Database() {
   const { env } = await import("cloudflare:workers");
   if (!env.DB) {
     throw new Error(
@@ -82,5 +87,5 @@ export async function getDb() {
   }
 
   await ensureSchema(env.DB);
-  return drizzle(env.DB, { schema });
+  return env.DB;
 }

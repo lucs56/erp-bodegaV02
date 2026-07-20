@@ -175,7 +175,7 @@ export function parseProgramSheet(grid: SheetGrid): ParsedWeek {
   return { ...identity, records, diagnostics };
 }
 
-export function parseWeekIdentity(sheetTitle: string, documentTitle: string) {
+export function parseWeekIdentity(sheetTitle: string, documentTitle: string, today=new Date()) {
   const normalizedSheet = normalize(sheetTitle);
   const isTentative = normalizedSheet.startsWith("TENTATIVO");
   const titleMatch = normalize(documentTitle).match(/SEM DEL (\d{1,2}) DE ([A-Z]+) AL (\d{1,2}) DE ([A-Z]+) (\d{4})/);
@@ -187,7 +187,7 @@ export function parseWeekIdentity(sheetTitle: string, documentTitle: string) {
     return {
       weekId: `${year}-${String(startMonth).padStart(2, "0")}-${String(startDay).padStart(2, "0")}`,
       weekLabel: `${String(startDay).padStart(2, "0")}–${String(endDay).padStart(2, "0")} ${shortMonth(endMonth)}`,
-      status: weekStatus(isTentative, Number(year), startMonth, Number(startDay), endMonth, Number(endDay)),
+      status: weekStatus(isTentative, Number(year), startMonth, Number(startDay), endMonth, Number(endDay),today),
     };
   }
 
@@ -198,7 +198,7 @@ export function parseWeekIdentity(sheetTitle: string, documentTitle: string) {
   return {
     weekId: `${yearMatch[1]}-${String(startMonth).padStart(2, "0")}-${String(startDay).padStart(2, "0")}`,
     weekLabel: `${String(startDay).padStart(2, "0")}–${String(endDay).padStart(2, "0")} ${shortMonth(Number(endMonth))}`,
-    status: weekStatus(isTentative, Number(yearMatch[1]), Number(startMonth), Number(startDay), Number(endMonth), Number(endDay)),
+    status: weekStatus(isTentative, Number(yearMatch[1]), Number(startMonth), Number(startDay), Number(endMonth), Number(endDay),today),
   };
 }
 
@@ -252,9 +252,8 @@ function shortMonth(month: number) {
   return ["", "Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"][month] ?? "";
 }
 
-function weekStatus(tentative: boolean, year: number, startMonth: number, startDay: number, endMonth: number, endDay: number): WeekStatus {
+function weekStatus(tentative: boolean, year: number, startMonth: number, startDay: number, endMonth: number, endDay: number,now=new Date()): WeekStatus {
   if (tentative) return "tentativa";
-  const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const start = Date.UTC(year, startMonth - 1, startDay);
   const end = Date.UTC(year, endMonth - 1, endDay);

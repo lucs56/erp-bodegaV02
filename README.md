@@ -1,4 +1,14 @@
-# vinext-starter
+# ERP de Insumos para Bodega
+
+## Mejoras de la versión 28
+
+- Programación conectada a Google Sheets sin caché, actualización automática cada 30 segundos con la pestaña visible y botón manual.
+- Importación de hasta 20.000 insumos en lotes D1, reemplazo de la fotografía anterior y verificación de la cantidad realmente guardada.
+- Recálculo de faltantes y compras después de confirmar la importación completa.
+- Reporte general y reporte Excel individual por insumo, nombrado con la descripción del material.
+- Administración de usuarios: altas, bajas, perfiles, permisos, bloqueo, restablecimiento de contraseña y estado de credenciales.
+- Cambio de contraseña propio desde el menú de perfil. Las contraseñas son hashes irreversibles y nunca se muestran en texto plano.
+- Asistente con respuestas conversacionales y búsqueda por código o nombre.
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and

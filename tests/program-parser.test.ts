@@ -16,7 +16,7 @@ const headers = row({
 });
 
 test("reconoce la semana actual aunque el año esté solo en el título", () => {
-  const identity = parseWeekIdentity("Sem 13-07 al 17-07", "Programa de Producción - Sem del 13 de Julio al 17 de Julio 2026");
+  const identity = parseWeekIdentity("Sem 13-07 al 17-07", "Programa de Producción - Sem del 13 de Julio al 17 de Julio 2026",new Date("2026-07-15T12:00:00Z"));
   assert.equal(identity?.weekId, "2026-07-13");
   assert.equal(identity?.weekLabel, "13–17 Jul");
   assert.equal(identity?.status, "actual");

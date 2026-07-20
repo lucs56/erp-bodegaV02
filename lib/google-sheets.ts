@@ -1,4 +1,5 @@
 import "server-only";
+import * as XLSX from "xlsx";
 import { parseProgramSheet, type ParsedWeek } from "./program-parser";
 
 const DEFAULT_SHEET_ID = "1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ";
@@ -18,9 +19,8 @@ export async function readLiveProgram(): Promise<LiveProgram | null> {
   const runtimeEnv = await runtimeVariables();
   const serviceAccountEmail = runtimeEnv.GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL;
   const privateKey = runtimeEnv.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (!serviceAccountEmail || !privateKey) return null;
-
   const spreadsheetId = runtimeEnv.GOOGLE_SHEET_ID || DEFAULT_SHEET_ID;
+  if (!serviceAccountEmail || !privateKey) return readPublicWorkbook(spreadsheetId);
   const token = await accessToken(serviceAccountEmail, privateKey);
   const metadataUrl = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`);
   metadataUrl.searchParams.set("fields", "properties(title),sheets(properties(sheetId,title,index,hidden,gridProperties(rowCount)))");
@@ -58,6 +58,16 @@ export async function readLiveProgram(): Promise<LiveProgram | null> {
     fetchedAt: new Date().toISOString(),
     weeks,
   };
+}
+
+async function readPublicWorkbook(spreadsheetId:string):Promise<LiveProgram>{
+  const url=new URL(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export`);
+  url.searchParams.set("format","xlsx");url.searchParams.set("_",Date.now().toString());
+  const response=await fetch(url,{cache:"no-store",headers:{"cache-control":"no-cache, no-store",pragma:"no-cache"}});
+  if(!response.ok)throw new Error(response.status===401||response.status===403?"Google Sheets no permite leer la programación. Compartila como lector mediante enlace.":`Google Sheets respondió ${response.status}.`);
+  const workbook=XLSX.read(await response.arrayBuffer(),{type:"array",cellDates:true});
+  const weeks=workbook.SheetNames.map((title,index)=>parseProgramSheet({sheetId:index+1,title,values:XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[title],{header:1,defval:"",raw:false})})).filter(week=>week.weekId!=="unknown");
+  return{spreadsheetId,title:"Programación Junín",fetchedAt:new Date().toISOString(),weeks};
 }
 
 async function accessToken(email: string, privateKey: string) {

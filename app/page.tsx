@@ -224,6 +224,9 @@ export default function Home() {
   const [loginDraft, setLoginDraft] = useState({ username: "", password: "" });
   const [loginError, setLoginError] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+  const [passwordPanelOpen,setPasswordPanelOpen]=useState(false);
+  const [passwordDraft,setPasswordDraft]=useState({current:"",next:"",confirm:""});
+  const [passwordMessage,setPasswordMessage]=useState("");
   const [records, setRecords] = useState<ProgramRecord[]>(programRecords);
   const recordsRef = useRef<ProgramRecord[]>(programRecords);
   const liveRef = useRef(false);
@@ -234,6 +237,7 @@ export default function Home() {
       "La conexión productiva de solo lectura todavía no está configurada.",
   });
   const [refreshing, setRefreshing] = useState(false);
+  const refreshingRef=useRef(false);
   const [view, setView] = useState<View>("resumen");
   const [selectedWeek, setSelectedWeek] = useState("");
   const [query, setQuery] = useState("");
@@ -313,6 +317,7 @@ export default function Home() {
       role: string;
       active: boolean;
       permissions: string;
+      passwordConfigured?:boolean;
     }>
   >([]);
   const [userDraft, setUserDraft] = useState({
@@ -335,7 +340,7 @@ export default function Home() {
   >([
     {
       from: "bot",
-      text: "Hola. Puedo consultar programación, stock, faltantes y compras. ¿Qué necesitás saber?",
+      text: "¡Hola! Soy tu asistente de insumos. Puedo ayudarte a revisar stock, próximos faltantes, compras y la programación. Podés escribirme un código, el nombre de un insumo o preguntarme algo como “¿qué debería comprar primero?”.",
     },
   ]);
   const weeks = useMemo(() => summarizeWeeks(records), [records]);
@@ -823,6 +828,15 @@ export default function Home() {
     const date = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(workbook, `reporte-compras-${date}.xlsx`);
   };
+  const exportPurchaseItem=async(item:ShortageRequirement)=>{
+    const XLSX=await import("xlsx");
+    const rows=item.products.map(product=>({"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item),"Código de producto":product.productCode,"Producto":product.productName,"Consumo del producto":product.quantity,"Sustitutos":item.substitutes.join(", ")}));
+    const sheet=XLSX.utils.json_to_sheet(rows.length?rows:[{"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item)}]);
+    sheet["!cols"]=[{wch:18},{wch:42},{wch:20},{wch:12},{wch:18},{wch:18},{wch:20},{wch:24},{wch:20},{wch:42},{wch:22},{wch:30}];if(sheet["!ref"])sheet["!autofilter"]={ref:sheet["!ref"]};
+    const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,sheet,"Compra individual");
+    const safe=item.materialName.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9_-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,80)||item.materialCode;
+    XLSX.writeFile(workbook,`compra-${safe}-${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
   const emptyUserDraft = () => ({
     id: 0,
     email: "",
@@ -927,8 +941,19 @@ export default function Home() {
     setSession(null);
     setView("resumen");
   };
+  const changeOwnPassword=async()=>{
+    setPasswordMessage("");
+    if(passwordDraft.next.length<4){setPasswordMessage("La nueva contraseña debe tener al menos 4 caracteres.");return;}
+    if(passwordDraft.next!==passwordDraft.confirm){setPasswordMessage("La confirmación no coincide.");return;}
+    const response=await fetch("/api/auth",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({currentPassword:passwordDraft.current,newPassword:passwordDraft.next})});
+    const payload=await response.json() as {error?:string};
+    if(!response.ok){setPasswordMessage(payload.error||"No se pudo cambiar la contraseña.");return;}
+    setPasswordDraft({current:"",next:"",confirm:""});setPasswordMessage("Contraseña actualizada correctamente.");
+  };
 
   const refreshProgram = useCallback(async () => {
+    if(refreshingRef.current)return;
+    refreshingRef.current=true;
     setRefreshing(true);
     try {
       const response = await fetch("/api/program", { cache: "no-store" });
@@ -956,7 +981,7 @@ export default function Home() {
         notice:
           payload.source?.notice ??
           (payload.source?.live
-            ? "Google Sheets se actualiza automáticamente cada 60 segundos."
+            ? "Google Sheets se actualiza automáticamente cada 30 segundos."
             : "Se conserva la última lectura validada."),
       });
     } catch {
@@ -967,13 +992,14 @@ export default function Home() {
           "No se pudo actualizar; se conserva la última lectura validada.",
       }));
     } finally {
+      refreshingRef.current=false;
       setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
     const initial = window.setTimeout(() => void refreshProgram(), 0);
-    const timer = window.setInterval(() => void refreshProgram(), 60_000);
+    const timer = window.setInterval(() => {if(document.visibilityState==="visible")void refreshProgram();}, 30_000);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(timer);
@@ -1011,16 +1037,16 @@ export default function Home() {
         ].filter(Boolean),
       ),
     ];
-    const code = codes.find((value) =>
-      term.includes(value.toLocaleLowerCase("es")),
-    );
-    if (code) {
+    const code = codes.find((value) =>term.includes(value.toLocaleLowerCase("es")))??stock.find(item=>term.includes(item.materialName.toLocaleLowerCase("es")))?.materialCode;
+    if (/^(hola|buen dia|buenas|buenos dias|hello)\b/.test(term)) answer=`¡Hola ${session?.name?.split(" ")[0]??""}! ¿Revisamos stock, faltantes, compras o la programación de esta semana?`;
+    else if(term.includes("gracias"))answer="¡De nada! Si querés, también puedo buscar otro insumo o decirte cuáles son las compras más urgentes.";
+    else if (code) {
       const stockItem = stock.find((item) => item.materialCode === code),
         requirement = requirements.find((item) => item.materialCode === code),
         productRows = records.filter((item) => item.productCode === code);
       if (stockItem || requirement) {
         const shortage = shortages.find((item) => item.materialCode === code);
-        answer = `${code}: stock ${formatNumber(stockItem?.quantity ?? 0)} unidades${requirement ? `, necesidad ${formatNumber(requirement.total)}` : ""}${shortage ? `, comprar ${formatNumber(shortage.shortage)}` : ", sin faltante calculado"}.${
+        answer = `Encontré ${stockItem?.materialName??code} (${code}). Tenés ${formatNumber(stockItem?.quantity ?? 0)} ${stockItem?.unit??"unidades"}${requirement ? ` y el programa necesita ${formatNumber(requirement.total)}` : ""}${shortage ? `. Faltan ${formatNumber(shortage.shortage)}, por lo que conviene incluirlo en Compras` : ". Por ahora el stock alcanza"}.${
           requirement?.products.length
             ? ` Lo consumen ${requirement.products
                 .map((product) => product.productCode)
@@ -1029,10 +1055,10 @@ export default function Home() {
             : ""
         }`;
       } else if (productRows.length)
-        answer = `${code}: ${productRows.length} operaciones programadas, ${formatNumber(productRows.reduce((sum, row) => sum + row.bottles, 0))} botellas, en ${[...new Set(productRows.map((row) => row.weekLabel))].join(", ")}.`;
+        answer = `El producto ${code} aparece en ${productRows.length} operaciones: ${formatNumber(productRows.reduce((sum, row) => sum + row.bottles, 0))} botellas en ${[...new Set(productRows.map((row) => row.weekLabel))].join(", ")}. ¿Querés revisar alguno de sus insumos?`;
     } else if (term.includes("compr") || term.includes("falt"))
       answer = shortages.length
-        ? `Hay ${shortages.length} insumos con faltante. Los principales son: ${[
+        ? `Ahora mismo veo ${shortages.length} insumos con faltante. Empezaría por estos: ${[
             ...shortages,
           ]
             .sort((a, b) => b.shortage - a.shortage)
@@ -1040,12 +1066,12 @@ export default function Home() {
             .map(
               (item) => `${item.materialCode} (${formatNumber(item.shortage)})`,
             )
-            .join(", ")}. Abrí Compras para ver el reporte completo.`
-        : "No hay faltantes calculados en este momento.";
+            .join(", ")}. Si me indicás uno, te doy su necesidad, stock y productos asociados.`
+        : "Buenas noticias: con la información cargada no hay faltantes calculados en este momento.";
     else if (term.includes("semana") || term.includes("produc"))
-      answer = `El programa contiene ${records.length} operaciones en ${weeks.length} semanas: ${weeks.map((week) => `${week.label} (${week.operations})`).join(", ")}.`;
+      answer = `La programación tiene ${records.length} operaciones repartidas en ${weeks.length} semanas: ${weeks.map((week) => `${week.label} (${week.operations})`).join(", ")}. ¿Querés que busque un producto específico?`;
     else if (term.includes("stock"))
-      answer = `Hay ${stock.length} códigos de insumos con stock cargado. Indicame un código para consultar su existencia.`;
+      answer = `El último reporte tiene ${stock.length} insumos cargados. Decime un código o parte del nombre —por ejemplo “tapón” o “cápsula”— y te digo cuánto hay y si alcanza.`;
     setChatMessages((messages) => [
       ...messages,
       { from: "user", text: clean },
@@ -1156,7 +1182,7 @@ export default function Home() {
             ["stock", "Stock"],
             ["faltantes", "Faltantes"],
             ["compras", "Compras"],
-            ["usuarios", "Usuarios"],
+            ["usuarios", "Administración"],
           ]
             .filter(([id]) => canAccess(id))
             .map(([id, label]) => (
@@ -1216,6 +1242,8 @@ export default function Home() {
               <small>
                 {session.role === "admin" ? "Administrador" : "Usuario normal"}
               </small>
+              <button onClick={()=>{setPasswordPanelOpen(value=>!value);setPasswordMessage("");}}>Cambiar contraseña</button>
+              {passwordPanelOpen&&<div className="password-panel"><input type="password" placeholder="Contraseña actual" value={passwordDraft.current} onChange={e=>setPasswordDraft({...passwordDraft,current:e.target.value})}/><input type="password" placeholder="Nueva contraseña" value={passwordDraft.next} onChange={e=>setPasswordDraft({...passwordDraft,next:e.target.value})}/><input type="password" placeholder="Repetir nueva contraseña" value={passwordDraft.confirm} onChange={e=>setPasswordDraft({...passwordDraft,confirm:e.target.value})}/>{passwordMessage&&<small>{passwordMessage}</small>}<button onClick={()=>void changeOwnPassword()}>Guardar contraseña</button></div>}
               <button onClick={() => void logout()}>Cerrar sesión</button>
             </div>
           )}
@@ -2672,6 +2700,7 @@ export default function Home() {
                                 <th>Comprar</th>
                                 <th>Semana del faltante</th>
                                 <th>Productos</th>
+                                <th>Reporte</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -2688,6 +2717,7 @@ export default function Home() {
                                   </td>
                                   <td>{firstShortageWeek(item)}</td>
                                   <td>{item.products.length}</td>
+                                  <td><button className="export-button compact" onClick={()=>void exportPurchaseItem(item)}>Excel individual</button></td>
                                 </tr>
                               ))}
                             </tbody>
@@ -2900,6 +2930,7 @@ export default function Home() {
                       <th>Perfil</th>
                       <th>Acceso</th>
                       <th>Permisos</th>
+                      <th>Contraseña</th>
                       <th>Acciones</th>
                     </tr>
                   </thead>
@@ -2926,6 +2957,7 @@ export default function Home() {
                             ? "Todos"
                             : user.permissions.split(",").length + " módulos"}
                         </td>
+                        <td>{user.passwordConfigured?"Configurada · editable":"Sin configurar"}</td>
                         <td>
                           <div className="row-actions">
                             <button onClick={() => editUser(user)}>

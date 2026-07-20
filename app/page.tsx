@@ -47,6 +47,7 @@ type Requirement = {
 };
 type ShortageRequirement = Requirement & {
   available: number;
+  depots?:Record<string,number>;
   shortage: number;
 };
 const emptyBomItem = (): BomItem => ({
@@ -113,6 +114,11 @@ function lineLabel(line: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-AR").format(value);
+}
+
+async function responseJson<T>(response:Response):Promise<T>{
+  const text=await response.text();
+  try{return JSON.parse(text) as T;}catch{throw new Error(response.status===503?"El servicio está ocupado. Esperá unos segundos y volvé a intentar.":`El servidor devolvió una respuesta inválida (${response.status}).`);}
 }
 
 function firstShortageWeek(item: ShortageRequirement) {
@@ -280,6 +286,7 @@ export default function Home() {
       category: string;
       quantity: number;
       unit: string;
+      depots:Record<string,number>;
     }>
   >([]);
   const [stockQuery, setStockQuery] = useState("");
@@ -480,7 +487,7 @@ export default function Home() {
     const term = stockQuery.trim().toLocaleLowerCase("es");
     return term
       ? stock.filter((item) =>
-          `${item.materialCode} ${item.materialName} ${item.category}`
+          `${item.materialCode} ${item.materialName} ${item.category} ${Object.keys(item.depots??{}).join(" ")}`
             .toLocaleLowerCase("es")
             .includes(term),
         )
@@ -617,7 +624,7 @@ export default function Home() {
     setRequirementState((state) => ({ ...state, loading: true, error: "" }));
     try {
       const response = await fetch("/api/requirements", { cache: "no-store" });
-      const payload = (await response.json()) as {
+      const payload = await responseJson<{
         requirements?: Requirement[];
         shortages?: Array<
           Requirement & { available: number; shortage: number }
@@ -627,7 +634,7 @@ export default function Home() {
         provisionalProducts?: number;
         stockItems?: number;
         error?: string;
-      };
+      }>(response);
       if (!response.ok)
         throw new Error(payload.error || "No se pudo calcular el consumo.");
       setRequirements(payload.requirements ?? []);
@@ -653,7 +660,7 @@ export default function Home() {
   }, []);
   const loadStock = useCallback(async () => {
     const r = await fetch("/api/stock", { cache: "no-store" });
-    const p = (await r.json()) as { items?: typeof stock };
+    const p = await responseJson<{ items?: typeof stock }>(r);
     if (r.ok) setStock(p.items ?? []);
   }, []);
   const saveStock = async () => {
@@ -773,6 +780,7 @@ export default function Home() {
           Necesidad: item.total,
           Disponible: item.available,
           "Cantidad a comprar": item.shortage,
+          "Stock por depósito":Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · "),
           "Semana del faltante": firstShortageWeek(item),
           "Semanas con consumo": item.weeks
             .map((week) => week.weekLabel)
@@ -830,8 +838,9 @@ export default function Home() {
   };
   const exportPurchaseItem=async(item:ShortageRequirement)=>{
     const XLSX=await import("xlsx");
-    const rows=item.products.map(product=>({"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item),"Código de producto":product.productCode,"Producto":product.productName,"Consumo del producto":product.quantity,"Sustitutos":item.substitutes.join(", ")}));
-    const sheet=XLSX.utils.json_to_sheet(rows.length?rows:[{"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item)}]);
+    const depotDetail=Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · ");
+    const rows=item.products.map(product=>({"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Stock por depósito":depotDetail,"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item),"Código de producto":product.productCode,"Producto":product.productName,"Consumo del producto":product.quantity,"Sustitutos":item.substitutes.join(", ")}));
+    const sheet=XLSX.utils.json_to_sheet(rows.length?rows:[{"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Stock por depósito":depotDetail,"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item)}]);
     sheet["!cols"]=[{wch:18},{wch:42},{wch:20},{wch:12},{wch:18},{wch:18},{wch:20},{wch:24},{wch:20},{wch:42},{wch:22},{wch:30}];if(sheet["!ref"])sheet["!autofilter"]={ref:sheet["!ref"]};
     const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,sheet,"Compra individual");
     const safe=item.materialName.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9_-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,80)||item.materialCode;
@@ -951,17 +960,17 @@ export default function Home() {
     setPasswordDraft({current:"",next:"",confirm:""});setPasswordMessage("Contraseña actualizada correctamente.");
   };
 
-  const refreshProgram = useCallback(async () => {
+  const refreshProgram = useCallback(async (force=false) => {
     if(refreshingRef.current)return;
     refreshingRef.current=true;
     setRefreshing(true);
     try {
-      const response = await fetch("/api/program", { cache: "no-store" });
+      const response = await fetch(force?"/api/program?fresh=1":"/api/program", { cache: "no-store" });
       if (!response.ok) throw new Error("No se pudo actualizar");
-      const payload = (await response.json()) as {
+      const payload = await responseJson<{
         source?: { live?: boolean; fetchedAt?: string; notice?: string };
         records?: ProgramRecord[];
-      };
+      }>(response);
       if (Array.isArray(payload.records)) {
         if (liveRef.current && payload.source?.live) {
           const change = diffProgram(recordsRef.current, payload.records);
@@ -1261,7 +1270,7 @@ export default function Home() {
               </div>
               <button
                 className="refresh-button"
-                onClick={() => void refreshProgram()}
+                onClick={() => void refreshProgram(true)}
                 disabled={refreshing}
               >
                 <Icon name="sync" />{" "}
@@ -1358,9 +1367,7 @@ export default function Home() {
                       <Icon name="bottle" />
                     </span>
                     <div>
-                      <span>
-                         Fraccionamiento · {weeks.length} {weeks.length === 1 ? "semana" : "semanas"}
-                      </span>
+                      <span>Fraccionamiento · {weeks.length} {weeks.length===1?"semana":"semanas"}</span>
                       <strong>{formatNumber(totalFractionBottles)}</strong>
                       <small>botellas programadas</small>
                     </div>
@@ -1597,7 +1604,7 @@ export default function Home() {
                     <p>{sourceState.notice}</p>
                   </div>
                   <button
-                    onClick={() => void refreshProgram()}
+                    onClick={() => void refreshProgram(true)}
                     disabled={refreshing}
                   >
                     {refreshing ? "Actualizando…" : "Actualizar"}
@@ -1855,7 +1862,7 @@ export default function Home() {
               </div>
               <button
                 className="refresh-button"
-                onClick={() => void refreshProgram()}
+                onClick={() => void refreshProgram(true)}
               >
                 {refreshing ? "Actualizando…" : "Actualizar"}
               </button>
@@ -2492,7 +2499,7 @@ export default function Home() {
                   <input
                     value={stockQuery}
                     onChange={(e) => setStockQuery(e.target.value)}
-                    placeholder="Buscar código, descripción o tipo"
+                    placeholder="Buscar código, descripción, tipo o depósito"
                   />
                 </label>
               </div>
@@ -2504,6 +2511,7 @@ export default function Home() {
                       <th>Código</th>
                       <th>Descripción</th>
                       <th>Disponible</th>
+                      <th>Distribución por depósito</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2515,6 +2523,7 @@ export default function Home() {
                         <td className="number-cell">
                           {formatNumber(item.quantity)} {item.unit}
                         </td>
+                        <td>{Object.keys(item.depots??{}).length?<div className="depot-list">{Object.entries(item.depots).sort(([a],[b])=>a.localeCompare(b)).map(([depot,quantity])=><span key={depot}><b>{depot}</b> {formatNumber(quantity)}</span>)}</div>:<span className="muted-value">Sin detalle en el reporte</span>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2713,7 +2722,7 @@ export default function Home() {
                                   </td>
                                   <td>{item.materialName}</td>
                                   <td>{formatNumber(item.total)}</td>
-                                  <td>{formatNumber(item.available)}</td>
+                                  <td><strong>{formatNumber(item.available)}</strong>{Object.keys(item.depots??{}).length?<small className="cell-detail">{Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · ")}</small>:null}</td>
                                   <td className="number-cell purchase-quantity">
                                     {formatNumber(item.shortage)}
                                   </td>
@@ -2749,7 +2758,7 @@ export default function Home() {
                               {item.materialCode} · {item.materialName}
                             </td>
                             <td>{formatNumber(item.total)}</td>
-                            <td>{formatNumber(item.available)}</td>
+                            <td><strong>{formatNumber(item.available)}</strong>{Object.keys(item.depots??{}).length?<small className="cell-detail">{Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · ")}</small>:null}</td>
                             <td className="number-cell">
                               {formatNumber(item.shortage)}
                             </td>

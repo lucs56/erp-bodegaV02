@@ -19,9 +19,10 @@
 
 * { box-sizing: border-box; }
 html { background: var(--canvas); }
-body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--font-geist-sans), Inter, Arial, sans-serif; }
+body { margin: 0; background: var(--canvas); color: var(--ink); font-family: Inter, "Segoe UI", Arial, sans-serif; }
 .login-page{min-height:100vh;display:grid;place-items:center;padding:24px;background:linear-gradient(135deg,var(--navy-deep),var(--navy))}.login-card{width:min(420px,100%);display:grid;gap:14px;padding:36px;border-radius:16px;background:white;box-shadow:0 24px 70px rgba(0,0,0,.28)}.login-card .brand-mark{margin-bottom:6px}.login-card h1{margin:0;font-size:32px;letter-spacing:-.04em}.login-card>p:not(.eyebrow){margin:0 0 8px;color:var(--muted)}.login-card label{display:grid;gap:6px;color:var(--muted);font-size:12px;font-weight:700}.login-card input{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px}.login-card .primary-button{width:100%;margin-top:4px}.login-card small{text-align:center;color:var(--muted)}.login-error{padding:10px;border-radius:7px;color:#a1322c;background:var(--soft-red);font-size:12px}
 button, input, select { font: inherit; }
+.depot-list{display:flex;flex-wrap:wrap;gap:6px}.depot-list span{padding:4px 7px;border-radius:6px;background:var(--soft-teal);font-size:11px;white-space:nowrap}.depot-list b{margin-right:3px;color:var(--teal)}.muted-value{color:var(--muted);font-size:11px}.cell-detail{display:block;margin-top:4px;color:var(--muted);font-size:10px;white-space:normal}
 button { color: inherit; }
 
 .app-shell { min-height: 100vh; }

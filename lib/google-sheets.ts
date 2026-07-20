@@ -7,6 +7,8 @@ const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
+let cachedProgram:{value:LiveProgram;expiresAt:number}|null=null;
+let pendingProgram:Promise<LiveProgram|null>|null=null;
 
 export type LiveProgram = {
   spreadsheetId: string;
@@ -15,7 +17,14 @@ export type LiveProgram = {
   weeks: ParsedWeek[];
 };
 
-export async function readLiveProgram(): Promise<LiveProgram | null> {
+export async function readLiveProgram(force=false): Promise<LiveProgram | null> {
+  if(!force&&cachedProgram&&cachedProgram.expiresAt>Date.now())return cachedProgram.value;
+  if(pendingProgram)return pendingProgram;
+  pendingProgram=fetchLiveProgram().then(value=>{if(value)cachedProgram={value,expiresAt:Date.now()+15_000};return value;}).finally(()=>{pendingProgram=null;});
+  return pendingProgram;
+}
+
+async function fetchLiveProgram(): Promise<LiveProgram | null> {
   const runtimeEnv = await runtimeVariables();
   const serviceAccountEmail = runtimeEnv.GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL;
   const privateKey = runtimeEnv.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, "\n");

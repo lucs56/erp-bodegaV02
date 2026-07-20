@@ -3,8 +3,7 @@ import { defineConfig } from "vite";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  "abcd5f76-124b-4dd8-93dd-ec53ec118fb9";
+const ERP_DATABASE_ID = "abcd5f76-124b-4dd8-93dd-ec53ec118fb9";
 
 const { d1, r2 } = hostingConfig;
 
@@ -19,7 +18,7 @@ const localBindingConfig = {
         {
           binding: d1,
           database_name: "base de datos de bodegas erp",
-          database_id: "abcd5f76-124b-4dd8-93dd-ec53ec118fb9",
+          database_id: ERP_DATABASE_ID,
         },
       ]
     : [],

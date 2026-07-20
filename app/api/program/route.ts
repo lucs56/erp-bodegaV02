@@ -4,9 +4,9 @@ import { PROGRAM_SOURCE, programRecords } from "../../../lib/program-data";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request:Request) {
   try {
-    const live = await readLiveProgram();
+    const live = await readLiveProgram(new URL(request.url).searchParams.get("fresh")==="1");
     if (live) {
       const records = live.weeks.flatMap((week) => week.records);
       return NextResponse.json(

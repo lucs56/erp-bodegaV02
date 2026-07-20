@@ -44,6 +44,14 @@ async function ensureSchema(database: D1Database) {
         updated_at TEXT NOT NULL
       )`,
       "CREATE UNIQUE INDEX IF NOT EXISTS stock_material_uq ON stock_items (material_code)",
+      `CREATE TABLE IF NOT EXISTS stock_depot_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        material_code TEXT NOT NULL,
+        depot TEXT NOT NULL,
+        quantity REAL DEFAULT 0 NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      "CREATE UNIQUE INDEX IF NOT EXISTS stock_depot_material_uq ON stock_depot_items (material_code, depot)",
       `CREATE TABLE IF NOT EXISTS app_users (
         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
         email TEXT NOT NULL,

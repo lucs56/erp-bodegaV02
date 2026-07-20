@@ -9,6 +9,17 @@
 - Administración de usuarios: altas, bajas, perfiles, permisos, bloqueo, restablecimiento de contraseña y estado de credenciales.
 - Cambio de contraseña propio desde el menú de perfil. Las contraseñas son hashes irreversibles y nunca se muestran en texto plano.
 - Asistente con respuestas conversacionales y búsqueda por código o nombre.
+- Indicador de Fraccionamiento calculado según la cantidad real de pestañas/semanas detectadas en Google Sheets.
+
+## Mejoras de la versión 29
+
+- Stock total con desglose por depósitos `2`, `C18`, `R18` y `2OB`.
+- Nueva tabla D1 `stock_depot_items`, creada automáticamente al iniciar la aplicación.
+- Depósitos visibles en Stock, Faltantes, Compras y reportes Excel individuales.
+- Lecturas de Google Sheets reutilizadas durante 15 segundos para evitar picos y errores 503.
+- Sincronizaciones simultáneas consolidadas en una única descarga; el botón manual fuerza una lectura nueva.
+- Respuestas de error de API controladas para evitar mensajes `Unexpected token '<'`.
+- Fuentes locales del sistema para eliminar los 404 de archivos Geist.
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and

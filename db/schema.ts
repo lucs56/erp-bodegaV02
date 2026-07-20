@@ -12,6 +12,9 @@ export const bomSubstitutes = sqliteTable("bom_substitutes", {
 export const stockItems = sqliteTable("stock_items", {
   id: integer("id").primaryKey({ autoIncrement: true }), materialCode: text("material_code").notNull(), materialName: text("material_name").notNull(), category: text("category").notNull(), quantity: real("quantity").notNull().default(0), unit: text("unit").notNull().default("unidad"), updatedAt: text("updated_at").notNull(),
 }, (table) => [uniqueIndex("stock_material_uq").on(table.materialCode)]);
+export const stockDepotItems = sqliteTable("stock_depot_items", {
+  id: integer("id").primaryKey({ autoIncrement: true }), materialCode:text("material_code").notNull(), depot:text("depot").notNull(), quantity:real("quantity").notNull().default(0), updatedAt:text("updated_at").notNull(),
+},table=>[uniqueIndex("stock_depot_material_uq").on(table.materialCode,table.depot)]);
 export const appUsers = sqliteTable("app_users", {
   id: integer("id").primaryKey({ autoIncrement: true }), email: text("email").notNull(), username:text("username"),passwordHash:text("password_hash"),name: text("name").notNull(), role: text("role").notNull().default("planner"), active: integer("active",{mode:"boolean"}).notNull().default(true), permissions: text("permissions").notNull().default("programacion,productos,bom,consumos,stock,faltantes,compras"), updatedAt:text("updated_at").notNull(),
 },table=>[uniqueIndex("app_users_email_uq").on(table.email),uniqueIndex("app_users_username_uq").on(table.username)]);

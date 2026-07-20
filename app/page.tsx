@@ -1358,7 +1358,9 @@ export default function Home() {
                       <Icon name="bottle" />
                     </span>
                     <div>
-                      <span>Fraccionamiento · 3 semanas</span>
+                      <span>
+                         Fraccionamiento · {weeks.length} {weeks.length === 1 ? "semana" : "semanas"}
+                      </span>
                       <strong>{formatNumber(totalFractionBottles)}</strong>
                       <small>botellas programadas</small>
                     </div>

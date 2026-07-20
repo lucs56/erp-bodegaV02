@@ -21,6 +21,12 @@
 - Respuestas de error de API controladas para evitar mensajes `Unexpected token '<'`.
 - Fuentes locales del sistema para eliminar los 404 de archivos Geist.
 
+## Mejoras de la versión 30
+
+- Exportación de Compras por tipo de insumo, con un botón independiente para Botellas, Tapones, Cápsulas, Cajas y cada categoría detectada.
+- Una sola fila por código de insumo dentro de cada archivo; los productos consumidores quedan consolidados en una celda.
+- Nombre automático del archivo según la categoría, por ejemplo `reporte-compras-Tapones-AAAA-MM-DD.xlsx`.
+
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
 Drizzle support.

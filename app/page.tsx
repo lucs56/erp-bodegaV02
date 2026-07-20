@@ -836,15 +836,13 @@ export default function Home() {
     const date = new Date().toISOString().slice(0, 10);
     XLSX.writeFile(workbook, `reporte-compras-${date}.xlsx`);
   };
-  const exportPurchaseItem=async(item:ShortageRequirement)=>{
+  const exportPurchaseCategory=async(category:string,items:ShortageRequirement[])=>{
     const XLSX=await import("xlsx");
-    const depotDetail=Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · ");
-    const rows=item.products.map(product=>({"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Stock por depósito":depotDetail,"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item),"Código de producto":product.productCode,"Producto":product.productName,"Consumo del producto":product.quantity,"Sustitutos":item.substitutes.join(", ")}));
-    const sheet=XLSX.utils.json_to_sheet(rows.length?rows:[{"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Stock por depósito":depotDetail,"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item)}]);
-    sheet["!cols"]=[{wch:18},{wch:42},{wch:20},{wch:12},{wch:18},{wch:18},{wch:20},{wch:24},{wch:20},{wch:42},{wch:22},{wch:30}];if(sheet["!ref"])sheet["!autofilter"]={ref:sheet["!ref"]};
-    const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,sheet,"Compra individual");
-    const safe=item.materialName.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9_-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,80)||item.materialCode;
-    XLSX.writeFile(workbook,`compra-${safe}-${new Date().toISOString().slice(0,10)}.xlsx`);
+    const rows=[...items].sort((a,b)=>a.materialName.localeCompare(b.materialName,"es")).map(item=>({"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Stock por depósito":Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · "),"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item),"Semanas con consumo":item.weeks.map(week=>week.weekLabel).join(", "),"Productos que lo consumen":item.products.map(product=>`${product.productCode} - ${product.productName} (${formatNumber(product.quantity)})`).join("; "),"Sustitutos":item.substitutes.join(", ")}));
+    const sheet=XLSX.utils.json_to_sheet(rows);sheet["!cols"]=[{wch:18},{wch:42},{wch:20},{wch:12},{wch:18},{wch:18},{wch:28},{wch:20},{wch:24},{wch:35},{wch:75},{wch:30}];if(sheet["!ref"])sheet["!autofilter"]={ref:sheet["!ref"]};
+    const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,sheet,category.replace(/[\/?*:[\]]/g," ").slice(0,31)||"Compras");
+    const safe=category.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9_-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,80)||"insumos";
+    XLSX.writeFile(workbook,`reporte-compras-${safe}-${new Date().toISOString().slice(0,10)}.xlsx`);
   };
   const emptyUserDraft = () => ({
     id: 0,
@@ -2699,6 +2697,7 @@ export default function Home() {
                             <strong>{formatNumber(group.total)}</strong>
                             <span>unidades a comprar</span>
                           </div>
+                          <button className="export-button" onClick={()=>void exportPurchaseCategory(group.category,group.items)}>Exportar {group.category}</button>
                         </header>
                         <div className="table-scroll">
                           <table>
@@ -2711,7 +2710,6 @@ export default function Home() {
                                 <th>Comprar</th>
                                 <th>Semana del faltante</th>
                                 <th>Productos</th>
-                                <th>Reporte</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -2728,7 +2726,6 @@ export default function Home() {
                                   </td>
                                   <td>{firstShortageWeek(item)}</td>
                                   <td>{item.products.length}</td>
-                                  <td><button className="export-button compact" onClick={()=>void exportPurchaseItem(item)}>Excel individual</button></td>
                                 </tr>
                               ))}
                             </tbody>

@@ -27,6 +27,14 @@
 - Una sola fila por código de insumo dentro de cada archivo; los productos consumidores quedan consolidados en una celda.
 - Nombre automático del archivo según la categoría, por ejemplo `reporte-compras-Tapones-AAAA-MM-DD.xlsx`.
 
+## Mejoras de la versión 31
+
+- Administración conserva intacta la gestión de usuarios y agrega pestañas informativas de Configuración y Diagnóstico.
+- Diagnóstico muestra conexión, última lectura, semanas, operaciones, stock y estado del motor de cálculo, con botón para probar la conexión.
+- El depósito `13` se identifica como Producción y se suma al stock disponible para calcular Faltantes y Compras.
+- Los depósitos permanecen desglosados en pantalla y en Excel: `13 (Producción)`, `C18 (Calidad)`, `2 (Depósito 2)`, `R18` y `2OB`.
+- Prueba de control: necesidad 300.000 menos 230.000 disponibles entre depósitos produce una compra de 70.000.
+
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
 Drizzle support.

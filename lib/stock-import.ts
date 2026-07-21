@@ -1,6 +1,8 @@
 export type StockImportItem={materialCode:string;materialName:string;category:string;quantity:number;unit:string;depots:Record<string,number>};
 export type StockImportResult={items:StockImportItem[];errors:string[];includedRows:number;excludedRows:number};
-const VALID_DEPOTS=new Set(["2","C18","R18","2OB"]);
+// El depósito 13 es stock que ya se encuentra en Producción. Sigue siendo
+// material disponible para cubrir el programa y debe reducir la compra.
+const VALID_DEPOTS=new Set(["2","13","C18","R18","2OB"]);
 const aliases={materialCode:["codigo","codigo insumo","codigo material","material","sku"],materialName:["descripcion","descripcion insumo","insumo","nombre"],category:["tipo","categoria","familia"],quantity:["stock","cantidad","existencia","disponible","stock disponible"],unit:["unidad","um","unidad medida"]}as const;
 function normalize(value:unknown){return String(value??"").trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[_./-]+/g," ").replace(/\s+/g," ")}
 function valueFor(row:Record<string,unknown>,names:readonly string[]){return Object.entries(row).find(([key])=>names.includes(normalize(key)))?.[1]}

@@ -116,6 +116,11 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("es-AR").format(value);
 }
 
+function depotLabel(depot:string){
+  const labels:Record<string,string>={"13":"13 (Producción)","2":"2 (Depósito 2)",C18:"C18 (Calidad)",R18:"R18", "2OB":"2OB"};
+  return labels[depot.trim().toUpperCase()]??depot;
+}
+
 async function responseJson<T>(response:Response):Promise<T>{
   const text=await response.text();
   try{return JSON.parse(text) as T;}catch{throw new Error(response.status===503?"El servicio está ocupado. Esperá unos segundos y volvé a intentar.":`El servidor devolvió una respuesta inválida (${response.status}).`);}
@@ -245,6 +250,7 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const refreshingRef=useRef(false);
   const [view, setView] = useState<View>("resumen");
+  const [adminTab,setAdminTab]=useState<"usuarios"|"configuracion"|"diagnostico">("usuarios");
   const [selectedWeek, setSelectedWeek] = useState("");
   const [query, setQuery] = useState("");
   const [productQuery, setProductQuery] = useState("");
@@ -780,7 +786,7 @@ export default function Home() {
           Necesidad: item.total,
           Disponible: item.available,
           "Cantidad a comprar": item.shortage,
-          "Stock por depósito":Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · "),
+          "Stock por depósito":Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · "),
           "Semana del faltante": firstShortageWeek(item),
           "Semanas con consumo": item.weeks
             .map((week) => week.weekLabel)
@@ -838,7 +844,7 @@ export default function Home() {
   };
   const exportPurchaseCategory=async(category:string,items:ShortageRequirement[])=>{
     const XLSX=await import("xlsx");
-    const rows=[...items].sort((a,b)=>a.materialName.localeCompare(b.materialName,"es")).map(item=>({"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Stock por depósito":Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · "),"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item),"Semanas con consumo":item.weeks.map(week=>week.weekLabel).join(", "),"Productos que lo consumen":item.products.map(product=>`${product.productCode} - ${product.productName} (${formatNumber(product.quantity)})`).join("; "),"Sustitutos":item.substitutes.join(", ")}));
+    const rows=[...items].sort((a,b)=>a.materialName.localeCompare(b.materialName,"es")).map(item=>({"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Stock por depósito":Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · "),"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item),"Semanas con consumo":item.weeks.map(week=>week.weekLabel).join(", "),"Productos que lo consumen":item.products.map(product=>`${product.productCode} - ${product.productName} (${formatNumber(product.quantity)})`).join("; "),"Sustitutos":item.substitutes.join(", ")}));
     const sheet=XLSX.utils.json_to_sheet(rows);sheet["!cols"]=[{wch:18},{wch:42},{wch:20},{wch:12},{wch:18},{wch:18},{wch:28},{wch:20},{wch:24},{wch:35},{wch:75},{wch:30}];if(sheet["!ref"])sheet["!autofilter"]={ref:sheet["!ref"]};
     const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,sheet,category.replace(/[\/?*:[\]]/g," ").slice(0,31)||"Compras");
     const safe=category.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9_-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,80)||"insumos";
@@ -2433,7 +2439,7 @@ export default function Home() {
                   columna <strong>Cant</strong>.
                 </p>
                 <small>
-                  Incluye depósitos 2, C18, R18 y 2OB, cualquiera sea su estado
+                  Incluye depósitos 2, 13, C18, R18 y 2OB, cualquiera sea su estado
                   operativo. Los vencidos quedan excluidos.
                 </small>
               </div>
@@ -2521,7 +2527,7 @@ export default function Home() {
                         <td className="number-cell">
                           {formatNumber(item.quantity)} {item.unit}
                         </td>
-                        <td>{Object.keys(item.depots??{}).length?<div className="depot-list">{Object.entries(item.depots).sort(([a],[b])=>a.localeCompare(b)).map(([depot,quantity])=><span key={depot}><b>{depot}</b> {formatNumber(quantity)}</span>)}</div>:<span className="muted-value">Sin detalle en el reporte</span>}</td>
+                        <td>{Object.keys(item.depots??{}).length?<div className="depot-list">{Object.entries(item.depots).sort(([a],[b])=>a.localeCompare(b)).map(([depot,quantity])=><span key={depot}><b>{depotLabel(depot)}</b> {formatNumber(quantity)}</span>)}</div>:<span className="muted-value">Sin detalle en el reporte</span>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2720,7 +2726,7 @@ export default function Home() {
                                   </td>
                                   <td>{item.materialName}</td>
                                   <td>{formatNumber(item.total)}</td>
-                                  <td><strong>{formatNumber(item.available)}</strong>{Object.keys(item.depots??{}).length?<small className="cell-detail">{Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · ")}</small>:null}</td>
+                                  <td><strong>{formatNumber(item.available)}</strong>{Object.keys(item.depots??{}).length?<small className="cell-detail">{Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")}</small>:null}</td>
                                   <td className="number-cell purchase-quantity">
                                     {formatNumber(item.shortage)}
                                   </td>
@@ -2755,7 +2761,7 @@ export default function Home() {
                               {item.materialCode} · {item.materialName}
                             </td>
                             <td>{formatNumber(item.total)}</td>
-                            <td><strong>{formatNumber(item.available)}</strong>{Object.keys(item.depots??{}).length?<small className="cell-detail">{Object.entries(item.depots??{}).map(([depot,quantity])=>`${depot}: ${formatNumber(quantity)}`).join(" · ")}</small>:null}</td>
+                            <td><strong>{formatNumber(item.available)}</strong>{Object.keys(item.depots??{}).length?<small className="cell-detail">{Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")}</small>:null}</td>
                             <td className="number-cell">
                               {formatNumber(item.shortage)}
                             </td>
@@ -2776,14 +2782,16 @@ export default function Home() {
             <div className="page-heading compact">
               <div>
                 <p className="eyebrow">Administración</p>
-                <h1>Usuarios y permisos</h1>
-                <p>
-                  Creá cuentas, definí accesos, restablecé contraseñas o
-                  desactivá usuarios.
-                </p>
+                <h1>{adminTab==="usuarios"?"Usuarios y permisos":adminTab==="configuracion"?"Configuración operativa":"Diagnóstico del sistema"}</h1>
+                <p>{adminTab==="usuarios"?"Creá cuentas, definí accesos, restablecé contraseñas o desactivá usuarios.":adminTab==="configuracion"?"Consultá los parámetros activos sin modificar la lógica que ya está funcionando.":"Comprobá la conexión, la última lectura y los datos recibidos desde Google Sheets."}</p>
               </div>
             </div>
-            <article className="table-card">
+            <nav className="admin-tabs" aria-label="Secciones de administración">
+              <button data-active={adminTab==="usuarios"} onClick={()=>setAdminTab("usuarios")}>Usuarios y permisos</button>
+              <button data-active={adminTab==="configuracion"} onClick={()=>setAdminTab("configuracion")}>Configuración</button>
+              <button data-active={adminTab==="diagnostico"} onClick={()=>setAdminTab("diagnostico")}>Diagnóstico</button>
+            </nav>
+            {adminTab==="usuarios"&&<article className="table-card">
               <div className="bom-form">
                 <div className="bom-fields">
                   <label>
@@ -2995,7 +3003,31 @@ export default function Home() {
                   </tbody>
                 </table>
               </div>
-            </article>
+            </article>}
+            {adminTab==="configuracion"&&<article className="table-card admin-system-card">
+              <div className="table-toolbar"><div><h2>Parámetros activos</h2><p>Vista informativa. No modifica la conexión ni los cálculos.</p></div><span className="row-status valid">Configuración protegida</span></div>
+              <div className="admin-config-grid">
+                <section><span>Google Sheets</span><strong>Programación Junín</strong><small>ID: 1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ</small></section>
+                <section><span>Sincronización automática</span><strong>Cada 30 segundos</strong><small>Se ejecuta solamente cuando la pestaña está visible.</small></section>
+                <section><span>Caché operativa</span><strong>15 segundos</strong><small>Evita consultas duplicadas y errores por exceso de solicitudes.</small></section>
+                <section><span>Depósitos incluidos</span><strong>2 · 13 · C18 · R18 · 2OB</strong><small>13 = Producción · C18 = Calidad · 2 = Depósito 2. Los vencidos quedan excluidos.</small></section>
+                <section><span>Capacidad de importación</span><strong>Hasta 20.000 insumos</strong><small>La carga se realiza por lotes y verifica el total guardado.</small></section>
+                <section><span>Base de datos</span><strong>Cloudflare D1</strong><small>Usuarios, BOM, stock y distribución por depósito.</small></section>
+              </div>
+              <div className="admin-protected-note"><strong>¿Por qué no son editables?</strong><p>El ID productivo, las credenciales de Google y los parámetros críticos permanecen protegidos para evitar cambios accidentales. Si deben modificarse, se realiza una actualización controlada.</p></div>
+            </article>}
+            {adminTab==="diagnostico"&&<article className="table-card admin-system-card">
+              <div className="table-toolbar"><div><h2>Estado de la integración</h2><p>Información de la sesión actual.</p></div><button className="export-button" disabled={refreshing} onClick={()=>void refreshProgram(true)}>{refreshing?"Probando…":"Probar conexión"}</button></div>
+              <div className="admin-diagnostic-grid">
+                <section data-ok={sourceState.live}><span>Conexión</span><strong>{sourceState.live?"Sincronizado en vivo":"Instantánea validada"}</strong><small>{sourceState.notice}</small></section>
+                <section><span>Última lectura</span><strong>{new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"medium"}).format(new Date(sourceState.fetchedAt))}</strong><small>Hora informada por la última respuesta válida.</small></section>
+                <section><span>Semanas detectadas</span><strong>{weeks.length}</strong><small>{weeks.map(week=>week.label).join(" · ")||"Sin semanas reconocidas"}</small></section>
+                <section><span>Operaciones recibidas</span><strong>{records.length}</strong><small>{records.filter(record=>record.action==="FRACCIONAR").length} fraccionar · {records.filter(record=>record.action==="VESTIR").length} vestir · {records.filter(record=>record.action==="ENCAJONAR").length} encajonar</small></section>
+                <section><span>Stock almacenado</span><strong>{stock.length} insumos</strong><small>{Object.keys(stock.reduce<Record<string,number>>((all,item)=>{for(const depot of Object.keys(item.depots??{}))all[depot]=(all[depot]??0)+1;return all;},{})).join(" · ")||"Sin depósitos cargados"}</small></section>
+                <section data-ok={!requirementState.error}><span>Motor de cálculo</span><strong>{requirementState.error?"Requiere atención":"Operativo"}</strong><small>{requirementState.error||`${requirementState.mapped} operaciones calculadas · ${requirementState.blocked} bloqueadas`}</small></section>
+              </div>
+              <div className="admin-protected-note"><strong>Si otro navegador actualiza y este no</strong><p>Use Probar conexión. Si la hora no cambia, recargue sin caché con Ctrl + Shift + R o cierre y vuelva a abrir la pestaña.</p></div>
+            </article>}
           </section>
         )}
 

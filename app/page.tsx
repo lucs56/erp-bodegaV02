@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PROGRAM_SOURCE,
-  programRecords,
   type ProgramRecord,
 } from "../lib/program-data";
 import { diffProgram } from "../lib/program-diff";
@@ -31,6 +30,8 @@ type BomItem = {
   substitutes: string[];
 };
 type BomProduct = { id: number; code: string; name: string; items: BomItem[] };
+type OperationalSettings={spreadsheetId:string;syncIntervalSeconds:number;cacheSeconds:number;includedDepots:string[]};
+const DEFAULT_OPERATIONAL_SETTINGS:OperationalSettings={spreadsheetId:"1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ",syncIntervalSeconds:60,cacheSeconds:60,includedDepots:["2","13","C18","R18","2OB"]};
 type Requirement = {
   materialCode: string;
   materialName: string;
@@ -238,8 +239,8 @@ export default function Home() {
   const [passwordPanelOpen,setPasswordPanelOpen]=useState(false);
   const [passwordDraft,setPasswordDraft]=useState({current:"",next:"",confirm:""});
   const [passwordMessage,setPasswordMessage]=useState("");
-  const [records, setRecords] = useState<ProgramRecord[]>(programRecords);
-  const recordsRef = useRef<ProgramRecord[]>(programRecords);
+  const [records, setRecords] = useState<ProgramRecord[]>([]);
+  const recordsRef = useRef<ProgramRecord[]>([]);
   const liveRef = useRef(false);
   const [sourceState, setSourceState] = useState({
     live: false,
@@ -257,6 +258,10 @@ export default function Home() {
   const [weekFilter, setWeekFilter] = useState("all");
   const [actionFilter, setActionFilter] = useState("all");
   const [lineFilter, setLineFilter] = useState("all");
+  const [showChangesOnly,setShowChangesOnly]=useState(false);
+  const [settings,setSettings]=useState(DEFAULT_OPERATIONAL_SETTINGS);
+  const [settingsDraft,setSettingsDraft]=useState(DEFAULT_OPERATIONAL_SETTINGS);
+  const [settingsMessage,setSettingsMessage]=useState("");
   const [bomProducts, setBomProducts] = useState<BomProduct[]>([]);
   const [bomLoading, setBomLoading] = useState(false);
   const [bomMessage, setBomMessage] = useState("");
@@ -284,6 +289,8 @@ export default function Home() {
     modified: 0,
     total: 0,
     detectedAt: "",
+    changedIds: [] as string[],
+    changedWeekIds: [] as string[],
   });
   const [stock, setStock] = useState<
     Array<{
@@ -393,6 +400,7 @@ export default function Home() {
       if (actionFilter !== "all" && record.action !== actionFilter)
         return false;
       if (lineFilter !== "all" && record.line !== lineFilter) return false;
+      if(showChangesOnly&&!programChange.changedIds.includes(record.id))return false;
       if (!normalized) return true;
       return [
         record.productCode,
@@ -407,7 +415,7 @@ export default function Home() {
         .toLocaleLowerCase("es")
         .includes(normalized);
     });
-  }, [records, query, weekFilter, actionFilter, lineFilter]);
+  }, [records, query, weekFilter, actionFilter, lineFilter,showChangesOnly,programChange.changedIds]);
   const groupedProgramRows = useMemo(
     () =>
       weeks
@@ -709,7 +717,7 @@ export default function Home() {
           : [];
       });
       if (!rows.length) throw new Error("El archivo no contiene filas.");
-      const parsed = parseStockRows(rows);
+      const parsed = parseStockRows(rows,new Set(settings.includedDepots));
       setStockImport({
         fileName: file.name,
         ...parsed,
@@ -1010,14 +1018,17 @@ export default function Home() {
     }
   }, []);
 
+  const loadSettings=useCallback(async()=>{try{const response=await fetch("/api/settings",{cache:"no-store"});const payload=await responseJson<{settings?:OperationalSettings}>(response);if(response.ok&&payload.settings){setSettings(payload.settings);setSettingsDraft(payload.settings);}}catch{}},[]);
+  const saveSettings=async()=>{setSettingsMessage("Guardando…");try{const response=await fetch("/api/settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(settingsDraft)});const payload=await responseJson<{settings?:OperationalSettings;error?:string}>(response);if(!response.ok||!payload.settings)throw new Error(payload.error||"No se pudo guardar.");setSettings(payload.settings);setSettingsDraft(payload.settings);setSettingsMessage("Configuración guardada en Cloudflare D1.");await refreshProgram(true);}catch(error){setSettingsMessage(error instanceof Error?error.message:"No se pudo guardar.");}};
+
   useEffect(() => {
     const initial = window.setTimeout(() => void refreshProgram(), 0);
-    const timer = window.setInterval(() => {if(document.visibilityState==="visible")void refreshProgram();}, 30_000);
+    const timer = window.setInterval(() => {if(document.visibilityState==="visible")void refreshProgram();}, settings.syncIntervalSeconds*1000);
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(timer);
     };
-  }, [refreshProgram]);
+  }, [refreshProgram,settings.syncIntervalSeconds]);
   useEffect(() => {
     void fetch("/api/auth", { cache: "no-store" })
       .then(async (r) => {
@@ -1028,8 +1039,8 @@ export default function Home() {
   }, []);
   useEffect(() => {
     if (!session) return;
-    void Promise.all([loadBoms(), loadStock(), loadRequirements()]);
-  }, [session, loadBoms, loadStock, loadRequirements]);
+    void Promise.all([loadBoms(), loadStock(), loadRequirements(),loadSettings()]);
+  }, [session, loadBoms, loadStock, loadRequirements,loadSettings]);
 
   const canAccess = (target: string) =>
     session?.role === "admin" ||
@@ -1287,6 +1298,7 @@ export default function Home() {
                 <span className="mini-icon">
                   <Icon name="sync" />
                 </span>
+                <button className="change-banner-link" onClick={()=>{setView("programacion");setShowChangesOnly(true);setWeekFilter(programChange.changedWeekIds.length===1?programChange.changedWeekIds[0]:"all");}}>
                 <div>
                   <strong>Cambio detectado en la programación</strong>
                   <p>
@@ -1294,6 +1306,7 @@ export default function Home() {
                     modificadas · {programChange.removed} eliminadas
                   </p>
                 </div>
+                </button>
                 <time>
                   {new Intl.DateTimeFormat("es-AR", {
                     hour: "2-digit",
@@ -1308,6 +1321,8 @@ export default function Home() {
                       modified: 0,
                       total: 0,
                       detectedAt: "",
+                      changedIds: [],
+                      changedWeekIds: [],
                     })
                   }
                 >
@@ -1641,6 +1656,7 @@ export default function Home() {
                   </label>
                 </div>
                 <div className="filter-row">
+                  {showChangesOnly&&<button className="changes-filter" onClick={()=>setShowChangesOnly(false)}>Cambios detectados ×</button>}
                   <label>
                     Semana
                     <select
@@ -3005,16 +3021,19 @@ export default function Home() {
               </div>
             </article>}
             {adminTab==="configuracion"&&<article className="table-card admin-system-card">
-              <div className="table-toolbar"><div><h2>Parámetros activos</h2><p>Vista informativa. No modifica la conexión ni los cálculos.</p></div><span className="row-status valid">Configuración protegida</span></div>
+              <div className="table-toolbar"><div><h2>Configuración operativa</h2><p>Solo el administrador puede modificar estos parámetros.</p></div><span className="row-status valid">Guardada en D1</span></div>
+              <div className="admin-settings-form">
+                <label>ID de Google Sheets<input value={settingsDraft.spreadsheetId} onChange={event=>setSettingsDraft(current=>({...current,spreadsheetId:event.target.value}))}/><small>No se muestran ni modifican aquí las credenciales privadas de Google.</small></label>
+                <label>Sincronización automática (segundos)<input type="number" min="10" max="3600" value={settingsDraft.syncIntervalSeconds} onChange={event=>setSettingsDraft(current=>({...current,syncIntervalSeconds:Number(event.target.value)}))}/><small>Se recomienda 60 segundos para evitar el Error 1102 de Cloudflare.</small></label>
+                <label>Caché compartida (segundos)<input type="number" min="0" max="300" value={settingsDraft.cacheSeconds} onChange={event=>setSettingsDraft(current=>({...current,cacheSeconds:Number(event.target.value)}))}/><small>Una sola lectura se reutiliza entre navegadores durante este período.</small></label>
+                <label>Depósitos incluidos<input value={settingsDraft.includedDepots.join(", ")} onChange={event=>setSettingsDraft(current=>({...current,includedDepots:event.target.value.split(",").map(value=>value.trim().toUpperCase()).filter(Boolean)}))}/><small>Separados por coma. 13 = Producción · C18 = Calidad · 2 = Depósito 2.</small></label>
+              </div>
+              <div className="settings-actions"><button className="primary-button" onClick={()=>void saveSettings()}>Guardar configuración</button>{settingsMessage&&<span>{settingsMessage}</span>}</div>
               <div className="admin-config-grid">
-                <section><span>Google Sheets</span><strong>Programación Junín</strong><small>ID: 1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ</small></section>
-                <section><span>Sincronización automática</span><strong>Cada 30 segundos</strong><small>Se ejecuta solamente cuando la pestaña está visible.</small></section>
-                <section><span>Caché operativa</span><strong>15 segundos</strong><small>Evita consultas duplicadas y errores por exceso de solicitudes.</small></section>
-                <section><span>Depósitos incluidos</span><strong>2 · 13 · C18 · R18 · 2OB</strong><small>13 = Producción · C18 = Calidad · 2 = Depósito 2. Los vencidos quedan excluidos.</small></section>
                 <section><span>Capacidad de importación</span><strong>Hasta 20.000 insumos</strong><small>La carga se realiza por lotes y verifica el total guardado.</small></section>
                 <section><span>Base de datos</span><strong>Cloudflare D1</strong><small>Usuarios, BOM, stock y distribución por depósito.</small></section>
               </div>
-              <div className="admin-protected-note"><strong>¿Por qué no son editables?</strong><p>El ID productivo, las credenciales de Google y los parámetros críticos permanecen protegidos para evitar cambios accidentales. Si deben modificarse, se realiza una actualización controlada.</p></div>
+              <div className="admin-protected-note"><strong>Protección de credenciales</strong><p>El correo de servicio y la clave privada de Google permanecen como secretos de Cloudflare. Desde aquí se modifican solamente los parámetros operativos seguros.</p></div>
             </article>}
             {adminTab==="diagnostico"&&<article className="table-card admin-system-card">
               <div className="table-toolbar"><div><h2>Estado de la integración</h2><p>Información de la sesión actual.</p></div><button className="export-button" disabled={refreshing} onClick={()=>void refreshProgram(true)}>{refreshing?"Probando…":"Probar conexión"}</button></div>

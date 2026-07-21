@@ -1,6 +1,8 @@
 import "server-only";
 import * as XLSX from "xlsx";
 import { parseProgramSheet, type ParsedWeek } from "./program-parser";
+import { readSettings } from "./app-settings";
+import { getD1Database } from "../db";
 
 const DEFAULT_SHEET_ID = "1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -18,17 +20,23 @@ export type LiveProgram = {
 };
 
 export async function readLiveProgram(force=false): Promise<LiveProgram | null> {
+  const settings=await readSettings();
   if(!force&&cachedProgram&&cachedProgram.expiresAt>Date.now())return cachedProgram.value;
+  if(!force){const shared=await readSharedCache(settings.cacheSeconds);if(shared)return shared;}
   if(pendingProgram)return pendingProgram;
-  pendingProgram=fetchLiveProgram().then(value=>{if(value)cachedProgram={value,expiresAt:Date.now()+15_000};return value;}).finally(()=>{pendingProgram=null;});
+  pendingProgram=fetchLiveProgram(settings.spreadsheetId).then(async value=>{if(value){cachedProgram={value,expiresAt:Date.now()+settings.cacheSeconds*1000};await writeSharedCache(value);}return value;}).finally(()=>{pendingProgram=null;});
   return pendingProgram;
 }
 
-async function fetchLiveProgram(): Promise<LiveProgram | null> {
+async function readSharedCache(maxAgeSeconds:number){try{const db=await getD1Database();const row=await db.prepare("SELECT value,fetched_at FROM program_cache WHERE key = ?").bind("live").first<{value:string;fetched_at:string}>();if(row&&Date.now()-new Date(row.fetched_at).getTime()<maxAgeSeconds*1000)return JSON.parse(row.value) as LiveProgram;}catch{}return null;}
+export async function readLastStoredProgram(){try{const db=await getD1Database();const row=await db.prepare("SELECT value FROM program_cache WHERE key = ?").bind("live").first<{value:string}>();return row?.value?JSON.parse(row.value) as LiveProgram:null;}catch{return null;}}
+async function writeSharedCache(value:LiveProgram){try{const db=await getD1Database();await db.prepare("INSERT INTO program_cache (key,value,fetched_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,fetched_at=excluded.fetched_at").bind("live",JSON.stringify(value),value.fetchedAt).run();}catch{}}
+
+async function fetchLiveProgram(configuredSpreadsheetId:string): Promise<LiveProgram | null> {
   const runtimeEnv = await runtimeVariables();
   const serviceAccountEmail = runtimeEnv.GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL;
   const privateKey = runtimeEnv.GOOGLE_SHEETS_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  const spreadsheetId = runtimeEnv.GOOGLE_SHEET_ID || DEFAULT_SHEET_ID;
+  const spreadsheetId = configuredSpreadsheetId || runtimeEnv.GOOGLE_SHEET_ID || DEFAULT_SHEET_ID;
   if (!serviceAccountEmail || !privateKey) return readPublicWorkbook(spreadsheetId);
   const token = await accessToken(serviceAccountEmail, privateKey);
   const metadataUrl = new URL(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`);

@@ -64,6 +64,16 @@ async function ensureSchema(database: D1Database) {
         updated_at TEXT NOT NULL
       )`,
       "CREATE UNIQUE INDEX IF NOT EXISTS app_users_email_uq ON app_users (email)",
+      `CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS program_cache (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      )`,
     ];
 
     await database.batch(setupStatements.map((sql) => database.prepare(sql)));

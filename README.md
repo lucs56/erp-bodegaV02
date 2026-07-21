@@ -1,5 +1,14 @@
 # ERP de Insumos para Bodega
 
+## Mejoras de la versión 32
+
+- El aviso de cambios abre Programación y filtra las filas agregadas o modificadas.
+- La configuración operativa es editable únicamente por administradores y se guarda en Cloudflare D1.
+- Permite configurar el ID del Sheet, los intervalos de sincronización y caché, y los depósitos incluidos.
+- La caché de programación es compartida en D1 para evitar reprocesamientos entre navegadores y reducir el riesgo del Error 1102.
+- Se recomiendan 60 segundos de sincronización y caché; el botón de actualización inmediata continúa disponible.
+- Las credenciales privadas de Google permanecen protegidas como secretos de Cloudflare.
+
 ## Mejoras de la versión 28
 
 - Programación conectada a Google Sheets sin caché, actualización automática cada 30 segundos con la pestaña visible y botón manual.

@@ -241,7 +241,6 @@ export default function Home() {
   const [passwordMessage,setPasswordMessage]=useState("");
   const [records, setRecords] = useState<ProgramRecord[]>([]);
   const recordsRef = useRef<ProgramRecord[]>([]);
-  const liveRef = useRef(false);
   const [sourceState, setSourceState] = useState({
     live: false,
     fetchedAt: PROGRAM_SOURCE.capturedAt,
@@ -985,19 +984,20 @@ export default function Home() {
     setPasswordDraft({current:"",next:"",confirm:""});setPasswordMessage("Contraseña actualizada correctamente.");
   };
 
-  const refreshProgram = useCallback(async (force=false) => {
+  const refreshProgram = useCallback(async (force=false,cachedOnly=false) => {
     if(refreshingRef.current)return;
     refreshingRef.current=true;
     setRefreshing(true);
     try {
-      const response = await fetch(force?"/api/program?fresh=1":"/api/program", { cache: "no-store" });
+      const endpoint=force?"/api/program?fresh=1":cachedOnly?"/api/program?cached=1":"/api/program";
+      const response = await fetch(endpoint, { cache: "no-store" });
       if (!response.ok) throw new Error("No se pudo actualizar");
       const payload = await responseJson<{
         source?: { live?: boolean; fetchedAt?: string; notice?: string };
         records?: ProgramRecord[];
       }>(response);
       if (Array.isArray(payload.records)) {
-        if (liveRef.current && payload.source?.live) {
+        if (recordsRef.current.length > 0 && payload.source?.live) {
           const change = diffProgram(recordsRef.current, payload.records);
           if (change.total)
             setProgramChange({
@@ -1008,14 +1008,13 @@ export default function Home() {
         recordsRef.current = payload.records;
         setRecords(payload.records);
       }
-      liveRef.current = Boolean(payload.source?.live);
       setSourceState({
         live: Boolean(payload.source?.live),
         fetchedAt: payload.source?.fetchedAt ?? PROGRAM_SOURCE.capturedAt,
         notice:
           payload.source?.notice ??
           (payload.source?.live
-            ? "Google Sheets se actualiza automáticamente cada 30 segundos."
+            ? "Google Sheets se actualiza automáticamente según el intervalo configurado."
             : "Se conserva la última lectura validada."),
       });
     } catch {
@@ -1035,13 +1034,12 @@ export default function Home() {
   const saveSettings=async()=>{setSettingsMessage("Guardando…");try{const response=await fetch("/api/settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(settingsDraft)});const payload=await responseJson<{settings?:OperationalSettings;error?:string}>(response);if(!response.ok||!payload.settings)throw new Error(payload.error||"No se pudo guardar.");setSettings(payload.settings);setSettingsDraft(payload.settings);setSettingsMessage("Configuración guardada en Cloudflare D1.");await refreshProgram(true);}catch(error){setSettingsMessage(error instanceof Error?error.message:"No se pudo guardar.");}};
 
   useEffect(() => {
-    const initial = window.setTimeout(() => void refreshProgram(), 0);
+    if (!session) return;
     const timer = window.setInterval(() => {if(document.visibilityState==="visible")void refreshProgram();}, settings.syncIntervalSeconds*1000);
     return () => {
-      window.clearTimeout(initial);
       window.clearInterval(timer);
     };
-  }, [refreshProgram,settings.syncIntervalSeconds]);
+  }, [session,refreshProgram,settings.syncIntervalSeconds]);
   useEffect(() => {
     void fetch("/api/auth", { cache: "no-store" })
       .then(async (r) => {
@@ -1052,8 +1050,23 @@ export default function Home() {
   }, []);
   useEffect(() => {
     if (!session) return;
-    void Promise.all([loadBoms(), loadStock(), loadRequirements(),loadSettings()]);
-  }, [session, loadBoms, loadStock, loadRequirements,loadSettings]);
+    let cancelled = false;
+    const hydrate = async () => {
+      // La pantalla de acceso no dispara ninguna consulta costosa. Después de
+      // autenticar, la carga se hace en etapas para no saturar el Worker.
+      await loadSettings();
+      if (cancelled) return;
+      await refreshProgram(false,true);
+      if (cancelled) return;
+      await Promise.all([loadBoms(), loadStock()]);
+      if (cancelled) return;
+      await loadRequirements();
+    };
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, loadBoms, loadStock, loadRequirements,loadSettings,refreshProgram]);
 
   const canAccess = (target: string) =>
     session?.role === "admin" ||

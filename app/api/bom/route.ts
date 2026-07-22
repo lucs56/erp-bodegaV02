@@ -8,7 +8,33 @@ export async function GET() {
   try {
     const db = await getDb();
     const [productRows, itemRows, substituteRows] = await Promise.all([db.select().from(products).orderBy(asc(products.code)), db.select().from(bomItems).orderBy(asc(bomItems.id)), db.select().from(bomSubstitutes).orderBy(asc(bomSubstitutes.priority))]);
-    return Response.json({ products: productRows.map((product) => ({ ...product, items: itemRows.filter((item) => item.productId === product.id).map((item) => ({ ...item, substitutes: substituteRows.filter((substitute) => substitute.bomItemId === item.id).map((substitute) => substitute.materialCode) })) })) });
+
+    const substitutesByItem = new Map<number, string[]>();
+    for (const substitute of substituteRows) {
+      const values = substitutesByItem.get(substitute.bomItemId) ?? [];
+      values.push(substitute.materialCode);
+      substitutesByItem.set(substitute.bomItemId, values);
+    }
+
+    const itemsByProduct = new Map<
+      number,
+      Array<(typeof itemRows)[number] & { substitutes: string[] }>
+    >();
+    for (const item of itemRows) {
+      const values = itemsByProduct.get(item.productId) ?? [];
+      values.push({
+        ...item,
+        substitutes: substitutesByItem.get(item.id) ?? [],
+      });
+      itemsByProduct.set(item.productId, values);
+    }
+
+    return Response.json({
+      products: productRows.map((product) => ({
+        ...product,
+        items: itemsByProduct.get(product.id) ?? [],
+      })),
+    });
   } catch (error) { return Response.json({ error: error instanceof Error ? error.message : "No se pudieron leer las BOM." }, { status: 500 }); }
 }
 export async function POST(request: Request) {

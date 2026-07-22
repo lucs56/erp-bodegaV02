@@ -1,5 +1,15 @@
 # ERP de Insumos para Bodega
 
+## Corrección de rendimiento v34
+
+- No descarga ni procesa Google Sheets mientras el usuario está en la pantalla de acceso.
+- Al ingresar muestra primero la última programación real guardada en D1 y luego sincroniza en segundo plano.
+- La carga inicial se ejecuta por etapas para evitar picos simultáneos de CPU en Cloudflare.
+- Stock, depósitos, BOM y faltantes utilizan índices en memoria en lugar de volver a recorrer miles de filas por cada insumo.
+- La importación masiva usa operaciones JSON por conjuntos, valida insumos y depósitos y evita miles de consultas individuales a D1.
+- El botón de actualización sigue forzando una lectura nueva del Sheet.
+- No incorpora planificación mensual ni estimados: conserva exclusivamente el ERP semanal de insumos.
+
 ## Corrección de pantalla blanca v33
 
 - El tablero ya no intenta leer la etiqueta de una semana inexistente mientras Google Sheets está cargando o devuelve temporalmente cero semanas.

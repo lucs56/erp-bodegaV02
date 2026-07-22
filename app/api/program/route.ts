@@ -5,7 +5,19 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request:Request) {
   try {
-    const live = await readLiveProgram(new URL(request.url).searchParams.get("fresh")==="1");
+    const parameters = new URL(request.url).searchParams;
+    const force = parameters.get("fresh") === "1";
+    if (parameters.get("cached") === "1" && !force) {
+      const stored = await readLastStoredProgram();
+      if (stored)
+        return liveResponse(
+          stored,
+          false,
+          "Se muestra la última lectura real guardada; la sincronización continuará en segundo plano.",
+        );
+    }
+
+    const live = await readLiveProgram(force);
     if (live) {
       const records = live.weeks.flatMap((week) => week.records);
       return NextResponse.json(

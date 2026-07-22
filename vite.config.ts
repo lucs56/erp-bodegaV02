@@ -18,7 +18,7 @@ const localBindingConfig = {
         {
           binding: d1,
           database_name: "base de datos de bodegas erp",
-          database_id: ERP_DATABASE_ID,
+          database_id: "021a3bca-6f01-4547-b098-eafa3782475c",
         },
       ]
     : [],

@@ -1,5 +1,12 @@
 # ERP de Insumos para Bodega
 
+## Corrección de pantalla blanca v33
+
+- El tablero ya no intenta leer la etiqueta de una semana inexistente mientras Google Sheets está cargando o devuelve temporalmente cero semanas.
+- Muestra un estado seguro `Sin programación cargada` y mantiene disponible la interfaz.
+- Los gráficos evitan dividir por cero cuando todavía no hay operaciones.
+- El `401` de `/api/auth` continúa siendo la respuesta normal cuando no existe una sesión iniciada.
+
 ## Mejoras de la versión 32
 
 - El aviso de cambios abre Programación y filtra las filas agregadas o modificadas.

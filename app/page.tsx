@@ -364,7 +364,20 @@ export default function Home() {
     },
   ]);
   const weeks = useMemo(() => summarizeWeeks(records), [records]);
-  const selected = weeks.find((week) => week.id === selectedWeek) ?? weeks[0];
+  // Durante el inicio de sesión la programación puede tardar unos segundos o
+  // Google Sheets puede devolver temporalmente cero semanas. El tablero debe
+  // seguir siendo navegable en ese estado en lugar de intentar leer `.label`
+  // sobre un valor inexistente y dejar toda la aplicación en blanco.
+  const selected = weeks.find((week) => week.id === selectedWeek) ?? weeks[0] ?? {
+    id: "empty",
+    label: "Sin programación cargada",
+    status: "pendiente",
+    operations: 0,
+    bottles: 0,
+    fraccionar: 0,
+    vestir: 0,
+    encajonar: 0,
+  };
   const missingCodeRecords = useMemo(
     () => records.filter((record) => !record.productCode),
     [records],
@@ -1434,7 +1447,7 @@ export default function Home() {
                           <span
                             className={String(tone)}
                             style={{
-                              width: `${Math.max(4, (Number(value) / selected.operations) * 100)}%`,
+                              width: `${selected.operations ? Math.max(4, (Number(value) / selected.operations) * 100) : 0}%`,
                             }}
                           />
                         </span>

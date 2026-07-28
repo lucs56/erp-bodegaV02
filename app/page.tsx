@@ -8,7 +8,10 @@ import {
 import { diffProgram } from "../lib/program-diff";
 import { parseStockRows, type StockImportItem } from "../lib/stock-import";
 import { suggestBomFromProgram } from "../lib/bom-suggestions";
-import type { TechnicalSheetAnalysis } from "../lib/technical-sheet";
+import {
+  generalAssistantFallback,
+  type GeneralAssistantContext,
+} from "../lib/assistant";
 
 type View =
   | "resumen"
@@ -32,7 +35,7 @@ type BomItem = {
 };
 type BomProduct = { id: number; code: string; name: string; items: BomItem[] };
 type OperationalSettings={spreadsheetId:string;syncIntervalSeconds:number;cacheSeconds:number;includedDepots:string[]};
-const DEFAULT_OPERATIONAL_SETTINGS:OperationalSettings={spreadsheetId:"1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ",syncIntervalSeconds:60,cacheSeconds:60,includedDepots:["2","13","C18","R18","2OB"]};
+const DEFAULT_OPERATIONAL_SETTINGS:OperationalSettings={spreadsheetId:"1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ",syncIntervalSeconds:30,cacheSeconds:15,includedDepots:["2","13","C18","R18","2OB"]};
 type Requirement = {
   materialCode: string;
   materialName: string;
@@ -51,25 +54,6 @@ type ShortageRequirement = Requirement & {
   available: number;
   depots?:Record<string,number>;
   shortage: number;
-};
-type StockSummary = {
-  itemCount: number;
-  updatedAt: string | null;
-  ageMinutes: number | null;
-  latestRun: {
-    source: string;
-    sourceName: string | null;
-    status: string;
-    itemCount: number;
-    completedAt: string;
-    message: string | null;
-  } | null;
-};
-type StockSyncState = {
-  configured: boolean;
-  syncMinutes: number;
-  loading: boolean;
-  message: string;
 };
 const emptyBomItem = (): BomItem => ({
   materialCode: "",
@@ -142,25 +126,18 @@ function depotLabel(depot:string){
   return labels[depot.trim().toUpperCase()]??depot;
 }
 
-function stockAgeLabel(minutes:number|null){
-  if(minutes===null)return"Sin carga registrada";
-  if(minutes<60)return`Actualizado hace ${minutes} min`;
-  if(minutes<1440)return`Actualizado hace ${Math.round(minutes/60)} h`;
-  return`Actualizado hace ${Math.round(minutes/1440)} días`;
-}
-
-function fileDataUrl(file:File){
-  return new Promise<string>((resolve,reject)=>{
-    const reader=new FileReader();
-    reader.onload=()=>resolve(String(reader.result??""));
-    reader.onerror=()=>reject(new Error("No se pudo leer el archivo."));
-    reader.readAsDataURL(file);
-  });
-}
-
 async function responseJson<T>(response:Response):Promise<T>{
   const text=await response.text();
-  try{return JSON.parse(text) as T;}catch{throw new Error(response.status===503?"El servicio está ocupado. Esperá unos segundos y volvé a intentar.":`El servidor devolvió una respuesta inválida (${response.status}).`);}
+  try{return JSON.parse(text) as T;}catch{throw new Error(response.status===503?"El servicio está ocupado. Se conservan los últimos datos válidos y se reintentará automáticamente.":`El servidor devolvió una respuesta inválida (${response.status}).`);}
+}
+
+async function fetchWithRetry(input:RequestInfo|URL,init?:RequestInit){
+  let response=await fetch(input,init);
+  if([429,503,504].includes(response.status)){
+    await new Promise(resolve=>window.setTimeout(resolve,800));
+    response=await fetch(input,init);
+  }
+  return response;
 }
 
 function firstShortageWeek(item: ShortageRequirement) {
@@ -277,6 +254,7 @@ export default function Home() {
   const [passwordMessage,setPasswordMessage]=useState("");
   const [records, setRecords] = useState<ProgramRecord[]>([]);
   const recordsRef = useRef<ProgramRecord[]>([]);
+  const liveRef = useRef(false);
   const [sourceState, setSourceState] = useState({
     live: false,
     fetchedAt: PROGRAM_SOURCE.capturedAt,
@@ -284,7 +262,8 @@ export default function Home() {
       "La conexión productiva de solo lectura todavía no está configurada.",
   });
   const [refreshing, setRefreshing] = useState(false);
-  const refreshingRef=useRef(false);
+  const refreshPromiseRef=useRef<Promise<{changed:boolean;live:boolean}>|null>(null);
+  const requirementsPromiseRef=useRef<Promise<void>|null>(null);
   const [view, setView] = useState<View>("resumen");
   const [adminTab,setAdminTab]=useState<"usuarios"|"configuracion"|"diagnostico">("usuarios");
   const [selectedWeek, setSelectedWeek] = useState("");
@@ -306,18 +285,6 @@ export default function Home() {
     name: "",
     items: [emptyBomItem()],
   });
-  const technicalSheetRef = useRef<HTMLInputElement>(null);
-  const [technicalSheet, setTechnicalSheet] = useState<{
-    fileName: string;
-    loading: boolean;
-    message: string;
-    analysis: TechnicalSheetAnalysis | null;
-  }>({
-    fileName: "",
-    loading: false,
-    message: "",
-    analysis: null,
-  });
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [requirementQuery, setRequirementQuery] = useState("");
   const [shortageQuery, setShortageQuery] = useState("");
@@ -326,6 +293,7 @@ export default function Home() {
     loading: false,
     mapped: 0,
     blocked: 0,
+    completed: 0,
     provisional: 0,
     stockItems: 0,
     error: "",
@@ -347,21 +315,8 @@ export default function Home() {
       quantity: number;
       unit: string;
       depots:Record<string,number>;
-      updatedAt?:string;
     }>
   >([]);
-  const [stockSummary,setStockSummary]=useState<StockSummary>({
-    itemCount:0,
-    updatedAt:null,
-    ageMinutes:null,
-    latestRun:null,
-  });
-  const [stockSync,setStockSync]=useState<StockSyncState>({
-    configured:false,
-    syncMinutes:15,
-    loading:false,
-    message:"",
-  });
   const [stockQuery, setStockQuery] = useState("");
   const [stockDraft, setStockDraft] = useState({
     materialCode: "",
@@ -416,39 +371,24 @@ export default function Home() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading,setChatLoading]=useState(false);
-  const [chatMode,setChatMode]=useState<"unknown"|"ai"|"guided">("unknown");
-  const [assistantConfigured,setAssistantConfigured]=useState(false);
   const [chatMessages, setChatMessages] = useState<
     Array<{ from: "user" | "bot"; text: string }>
   >([
     {
       from: "bot",
-      text: "¡Hola! Soy el asistente general del ERP. Puedo explicarte qué cambió en la programación, el estado del sistema, cómo funciona cada módulo y qué necesita atención.",
+      text: "¡Hola! Soy el asistente general del ERP. Puedo explicarte la sincronización, los cambios del programa, el estado del sistema y para qué sirve cada módulo.",
     },
   ]);
   const weeks = useMemo(() => summarizeWeeks(records), [records]);
-  // Durante el inicio de sesión la programación puede tardar unos segundos o
-  // Google Sheets puede devolver temporalmente cero semanas. El tablero debe
-  // seguir siendo navegable en ese estado en lugar de intentar leer `.label`
-  // sobre un valor inexistente y dejar toda la aplicación en blanco.
-  const selected = weeks.find((week) => week.id === selectedWeek) ?? weeks[0] ?? {
-    id: "empty",
-    label: "Sin programación cargada",
-    status: "pendiente",
-    operations: 0,
-    bottles: 0,
-    fraccionar: 0,
-    vestir: 0,
-    encajonar: 0,
-  };
+  const selected = weeks.find((week) => week.id === selectedWeek) ?? weeks[0];
   const missingCodeRecords = useMemo(
-    () => records.filter((record) => !record.productCode),
+    () => records.filter((record) => !record.completed && !record.productCode),
     [records],
   );
   const withoutEmbeddedMaterials = useMemo(
     () =>
       records.filter((record) =>
-        Object.values(record.materials).every((value) => !value),
+        !record.completed&&Object.values(record.materials).every((value) => !value),
       ),
     [records],
   );
@@ -652,14 +592,14 @@ export default function Home() {
         error?: string;
       };
       if (!response.ok)
-        throw new Error(payload.error || "No se pudieron cargar las BOM.");
+        throw new Error(payload.error || "No se pudieron cargar las fichas técnicas.");
       setBomProducts(payload.products ?? []);
       setBomMessage("");
     } catch (error) {
       setBomMessage(
         error instanceof Error
           ? error.message
-          : "No se pudieron cargar las BOM.",
+          : "No se pudieron cargar las fichas técnicas.",
       );
     } finally {
       setBomLoading(false);
@@ -676,14 +616,13 @@ export default function Home() {
       });
       const payload = (await response.json()) as { error?: string };
       if (!response.ok)
-        throw new Error(payload.error || "No se pudo guardar la BOM.");
+        throw new Error(payload.error || "No se pudo guardar la ficha técnica.");
       setBomDraft({ code: "", name: "", items: [emptyBomItem()] });
-      setTechnicalSheet({fileName:"",loading:false,message:"",analysis:null});
       await loadBoms();
-      setBomMessage("BOM guardada correctamente.");
+      setBomMessage("Ficha técnica guardada correctamente.");
     } catch (error) {
       setBomMessage(
-        error instanceof Error ? error.message : "No se pudo guardar la BOM.",
+        error instanceof Error ? error.message : "No se pudo guardar la ficha técnica.",
       );
     } finally {
       setBomLoading(false);
@@ -711,148 +650,54 @@ export default function Home() {
       `${bomSuggestion.items.length} referencias encontradas en el Sheet. Revisá descripción y consumo antes de guardar.`,
     );
   };
-  const analyzeTechnicalSheet = async (file?:File) => {
-    if(!file)return;
-    if(file.type!=="application/pdf"&&!file.name.toLocaleLowerCase("es").endsWith(".pdf")){
-      setTechnicalSheet({fileName:file.name,loading:false,message:"El archivo debe ser PDF.",analysis:null});
-      return;
-    }
-    if(file.size>15*1024*1024){
-      setTechnicalSheet({fileName:file.name,loading:false,message:"La ficha no puede superar 15 MB.",analysis:null});
-      return;
-    }
-    setTechnicalSheet({fileName:file.name,loading:true,message:"Analizando texto, tablas e imágenes del PDF…",analysis:null});
-    try{
-      const response=await fetch("/api/technical-sheets/analyze",{
-        method:"POST",
-        headers:{"content-type":"application/json"},
-        body:JSON.stringify({fileName:file.name,fileData:await fileDataUrl(file)}),
-      });
-      const payload=await responseJson<{analysis?:TechnicalSheetAnalysis;error?:string}>(response);
-      if(!response.ok||!payload.analysis)throw new Error(payload.error||"No se pudo analizar la ficha técnica.");
-      setTechnicalSheet({
-        fileName:file.name,
-        loading:false,
-        message:`Se reconocieron ${payload.analysis.items.length} insumos. Revisalos antes de guardar.`,
-        analysis:payload.analysis,
-      });
-    }catch(error){
-      setTechnicalSheet({
-        fileName:file.name,
-        loading:false,
-        message:error instanceof Error?error.message:"No se pudo analizar la ficha técnica.",
-        analysis:null,
-      });
-    }finally{
-      if(technicalSheetRef.current)technicalSheetRef.current.value="";
-    }
-  };
-  const applyTechnicalSheet=()=>{
-    const analysis=technicalSheet.analysis;
-    if(!analysis)return;
-    setBomDraft(current=>({
-      code:analysis.productCode||current.code,
-      name:analysis.productName||current.name,
-      items:analysis.items.length
-        ?analysis.items.map(item=>({
-          materialCode:item.materialCode,
-          materialName:item.materialName,
-          category:item.category,
-          quantity:item.quantity,
-          unit:item.unit,
-          action:item.action,
-          substitutes:item.substitutes,
-        }))
-        :current.items,
-    }));
-    setBomMessage("Borrador aplicado desde el PDF. Confirmá códigos, consumos y operaciones antes de guardar.");
-  };
   const loadRequirements = useCallback(async () => {
-    setRequirementState((state) => ({ ...state, loading: true, error: "" }));
-    try {
-      const response = await fetch("/api/requirements", { cache: "no-store" });
-      const payload = await responseJson<{
-        requirements?: Requirement[];
-        shortages?: Array<
-          Requirement & { available: number; shortage: number }
-        >;
-        mappedOperations?: number;
-        blockedOperations?: number;
-        provisionalProducts?: number;
-        stockItems?: number;
-        error?: string;
-      }>(response);
-      if (!response.ok)
-        throw new Error(payload.error || "No se pudo calcular el consumo.");
-      setRequirements(payload.requirements ?? []);
-      setShortages(payload.shortages ?? []);
-      setRequirementState({
-        loading: false,
-        mapped: payload.mappedOperations ?? 0,
-        blocked: payload.blockedOperations ?? 0,
-        provisional: payload.provisionalProducts ?? 0,
-        stockItems: payload.stockItems ?? 0,
-        error: "",
-      });
-    } catch (error) {
-      setRequirementState((state) => ({
-        ...state,
-        loading: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "No se pudo calcular el consumo.",
-      }));
-    }
+    if(requirementsPromiseRef.current)return requirementsPromiseRef.current;
+    const operation=(async()=>{
+      setRequirementState((state) => ({ ...state, loading: true, error: "" }));
+      try {
+        const response = await fetchWithRetry("/api/requirements", { cache: "no-store" });
+        const payload = await responseJson<{
+          requirements?: Requirement[];
+          shortages?: Array<
+            Requirement & { available: number; shortage: number }
+          >;
+          mappedOperations?: number;
+          blockedOperations?: number;
+          completedOperations?: number;
+          provisionalProducts?: number;
+          stockItems?: number;
+          error?: string;
+        }>(response);
+        if (!response.ok)
+          throw new Error(payload.error || "No se pudo calcular el consumo.");
+        setRequirements(payload.requirements ?? []);
+        setShortages(payload.shortages ?? []);
+        setRequirementState({
+          loading: false,
+          mapped: payload.mappedOperations ?? 0,
+          blocked: payload.blockedOperations ?? 0,
+          completed: payload.completedOperations ?? 0,
+          provisional: payload.provisionalProducts ?? 0,
+          stockItems: payload.stockItems ?? 0,
+          error: "",
+        });
+      } catch (error) {
+        setRequirementState((state) => ({
+          ...state,
+          loading: false,
+          error:
+            `${error instanceof Error ? error.message : "No se pudo calcular el consumo."} Los valores que ves corresponden al último cálculo correcto.`,
+        }));
+      }
+    })();
+    requirementsPromiseRef.current=operation;
+    try{await operation;}finally{if(requirementsPromiseRef.current===operation)requirementsPromiseRef.current=null;}
   }, []);
   const loadStock = useCallback(async () => {
-    try{
-      const r = await fetch("/api/stock", { cache: "no-store" });
-      const p = await responseJson<{ items?: typeof stock;summary?:StockSummary;error?:string }>(r);
-      if(!r.ok)throw new Error(p.error||"No se pudo leer el stock.");
-      setStock(p.items ?? []);
-      if(p.summary)setStockSummary(p.summary);
-    }catch(error){
-      setStockSync(current=>({...current,message:error instanceof Error?error.message:"No se pudo leer el stock."}));
-    }
+    const r = await fetch("/api/stock", { cache: "no-store" });
+    const p = await responseJson<{ items?: typeof stock }>(r);
+    if (r.ok) setStock(p.items ?? []);
   }, []);
-  const loadStockSyncStatus=useCallback(async()=>{
-    try{
-      const response=await fetch("/api/stock/sync",{cache:"no-store"});
-      const payload=await responseJson<{configured?:boolean;syncMinutes?:number;status?:StockSummary;error?:string}>(response);
-      if(!response.ok)throw new Error(payload.error||"No se pudo revisar la conexión de stock.");
-      setStockSync(current=>({
-        ...current,
-        configured:Boolean(payload.configured),
-        syncMinutes:payload.syncMinutes??15,
-      }));
-      if(payload.status)setStockSummary(payload.status);
-    }catch{
-      // La carga por Excel no depende de esta integración opcional.
-    }
-  },[]);
-  const syncStockFromErp=useCallback(async(force:boolean)=>{
-    setStockSync(current=>({...current,loading:true,message:force?"Consultando el ERP…":"Verificando actualización automática…"}));
-    try{
-      const response=await fetch("/api/stock/sync",{
-        method:"POST",
-        headers:{"content-type":"application/json"},
-        body:JSON.stringify({force}),
-      });
-      const payload=await responseJson<{skipped?:boolean;imported?:number;message?:string;error?:string}>(response);
-      if(!response.ok)throw new Error(payload.error||"No se pudo actualizar desde el ERP.");
-      await Promise.all([loadStock(),loadRequirements()]);
-      setStockSync(current=>({
-        ...current,
-        loading:false,
-        message:payload.skipped
-          ?payload.message||"El stock ya estaba actualizado."
-          :`Stock actualizado desde el ERP: ${payload.imported??0} insumos.`,
-      }));
-    }catch(error){
-      setStockSync(current=>({...current,loading:false,message:error instanceof Error?error.message:"No se pudo actualizar desde el ERP."}));
-    }
-  },[loadRequirements,loadStock]);
   const saveStock = async () => {
     const r = await fetch("/api/stock", {
       method: "POST",
@@ -927,11 +772,12 @@ export default function Home() {
       const r = await fetch("/api/stock/bulk", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ items: stockImport.items,sourceName:stockImport.fileName }),
+        body: JSON.stringify({ items: stockImport.items }),
       });
-      const p = await responseJson<{ imported?: number; error?: string }>(r);
+      const p = (await r.json()) as { imported?: number; error?: string };
       if (!r.ok) throw new Error(p.error || "No se pudo importar el stock.");
       await loadStock();
+      if(requirementsPromiseRef.current)await requirementsPromiseRef.current;
       await loadRequirements();
       setStockImport((current) => ({
         ...current,
@@ -1148,89 +994,79 @@ export default function Home() {
     setPasswordDraft({current:"",next:"",confirm:""});setPasswordMessage("Contraseña actualizada correctamente.");
   };
 
-  const refreshProgram = useCallback(async (force=false,cachedOnly=false) => {
-    if(refreshingRef.current)return;
-    refreshingRef.current=true;
-    setRefreshing(true);
-    try {
-      const endpoint=force?"/api/program?fresh=1":cachedOnly?"/api/program?cached=1":"/api/program";
-      const response = await fetch(endpoint, { cache: "no-store" });
-      if (!response.ok) throw new Error("No se pudo actualizar");
-      const payload = await responseJson<{
-        source?: { live?: boolean; fetchedAt?: string; notice?: string };
-        records?: ProgramRecord[];
-        recentChange?:{
-          added:number;
-          removed:number;
-          modified:number;
-          total:number;
-          detectedAt:string;
-          changedIds:string[];
-          changedWeekIds:string[];
-        }|null;
-      }>(response);
-      if (Array.isArray(payload.records)) {
-        if(payload.recentChange?.total){
-          setProgramChange({
-            added:payload.recentChange.added,
-            removed:payload.recentChange.removed,
-            modified:payload.recentChange.modified,
-            total:payload.recentChange.total,
-            detectedAt:payload.recentChange.detectedAt,
-            changedIds:payload.recentChange.changedIds??[],
-            changedWeekIds:payload.recentChange.changedWeekIds??[],
-          });
-        }else if (recordsRef.current.length > 0 && payload.source?.live) {
-          const change = diffProgram(recordsRef.current, payload.records);
-          if (change.total)
-            setProgramChange({
-              ...change,
-              detectedAt: new Date().toISOString(),
-            });
+  const refreshProgram = useCallback(async (force=false) => {
+    if(refreshPromiseRef.current)return refreshPromiseRef.current;
+    const operation=(async()=>{
+      setRefreshing(true);
+      try {
+        const response = await fetchWithRetry(force?"/api/program?fresh=1":"/api/program", { cache: "no-store" });
+        if (!response.ok) throw new Error("No se pudo actualizar");
+        const payload = await responseJson<{
+          source?: { live?: boolean; fetchedAt?: string; notice?: string };
+          records?: ProgramRecord[];
+        }>(response);
+        let changed=false;
+        if (Array.isArray(payload.records)) {
+          if (liveRef.current && payload.source?.live) {
+            const change = diffProgram(recordsRef.current, payload.records);
+            changed=change.total>0;
+            if (change.total)
+              setProgramChange({
+                ...change,
+                detectedAt: new Date().toISOString(),
+              });
+          }
+          recordsRef.current = payload.records;
+          setRecords(payload.records);
         }
-        recordsRef.current = payload.records;
-        setRecords(payload.records);
+        liveRef.current = Boolean(payload.source?.live);
+        setSourceState({
+          live: Boolean(payload.source?.live),
+          fetchedAt: payload.source?.fetchedAt ?? PROGRAM_SOURCE.capturedAt,
+          notice:
+            payload.source?.notice ??
+            (payload.source?.live
+              ? "Google Sheets se actualiza automáticamente cada 30 segundos."
+              : "Se conserva la última lectura validada."),
+        });
+        return{changed,live:Boolean(payload.source?.live)};
+      } catch {
+        setSourceState((current) => ({
+          ...current,
+          live: false,
+          notice:
+            "No se pudo actualizar; se conservan la programación y los cálculos de la última lectura válida.",
+        }));
+        return{changed:false,live:false};
+      } finally {
+        setRefreshing(false);
       }
-      setSourceState({
-        live: Boolean(payload.source?.live),
-        fetchedAt: payload.source?.fetchedAt ?? PROGRAM_SOURCE.capturedAt,
-        notice:
-          payload.source?.notice ??
-          (payload.source?.live
-            ? "Google Sheets se actualiza automáticamente según el intervalo configurado."
-            : "Se conserva la última lectura validada."),
-      });
-    } catch {
-      setSourceState((current) => ({
-        ...current,
-        live: false,
-        notice:
-          "No se pudo actualizar; se conserva la última lectura validada.",
-      }));
-    } finally {
-      refreshingRef.current=false;
-      setRefreshing(false);
-    }
+    })();
+    refreshPromiseRef.current=operation;
+    try{return await operation;}finally{if(refreshPromiseRef.current===operation)refreshPromiseRef.current=null;}
   }, []);
 
   const loadSettings=useCallback(async()=>{try{const response=await fetch("/api/settings",{cache:"no-store"});const payload=await responseJson<{settings?:OperationalSettings}>(response);if(response.ok&&payload.settings){setSettings(payload.settings);setSettingsDraft(payload.settings);}}catch{}},[]);
-  const loadAssistantStatus=useCallback(async()=>{try{const response=await fetch("/api/assistant",{cache:"no-store"});const payload=await responseJson<{configured?:boolean}>(response);if(response.ok)setAssistantConfigured(Boolean(payload.configured));}catch{}},[]);
-  const saveSettings=async()=>{setSettingsMessage("Guardando…");try{const response=await fetch("/api/settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(settingsDraft)});const payload=await responseJson<{settings?:OperationalSettings;error?:string}>(response);if(!response.ok||!payload.settings)throw new Error(payload.error||"No se pudo guardar.");setSettings(payload.settings);setSettingsDraft(payload.settings);setSettingsMessage("Configuración guardada en Cloudflare D1.");await refreshProgram(true);}catch(error){setSettingsMessage(error instanceof Error?error.message:"No se pudo guardar.");}};
+  const synchronizeProgram=useCallback(async(force=false,recalculate=false)=>{
+    const result=await refreshProgram(force);
+    if(recalculate||result.changed){
+      if(requirementsPromiseRef.current)await requirementsPromiseRef.current;
+      await loadRequirements();
+    }
+    return result;
+  },[refreshProgram,loadRequirements]);
+  const saveSettings=async()=>{setSettingsMessage("Guardando…");try{const response=await fetch("/api/settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(settingsDraft)});const payload=await responseJson<{settings?:OperationalSettings;error?:string}>(response);if(!response.ok||!payload.settings)throw new Error(payload.error||"No se pudo guardar.");setSettings(payload.settings);setSettingsDraft(payload.settings);setSettingsMessage("Configuración guardada en Cloudflare D1.");await synchronizeProgram(true,true);}catch(error){setSettingsMessage(error instanceof Error?error.message:"No se pudo guardar.");}};
 
   useEffect(() => {
-    if (!session) return;
-    const timer = window.setInterval(() => {if(document.visibilityState==="visible")void refreshProgram();}, settings.syncIntervalSeconds*1000);
+    if(!session)return;
+    const timer = window.setInterval(() => {if(document.visibilityState==="visible")void synchronizeProgram();}, settings.syncIntervalSeconds*1000);
+    const onVisible=()=>{if(document.visibilityState==="visible")void synchronizeProgram();};
+    document.addEventListener("visibilitychange",onVisible);
     return () => {
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange",onVisible);
     };
-  }, [session,refreshProgram,settings.syncIntervalSeconds]);
-  useEffect(()=>{
-    if(!session||!stockSync.configured)return;
-    const timer=window.setInterval(()=>{
-      if(document.visibilityState==="visible")void syncStockFromErp(false);
-    },Math.max(5,stockSync.syncMinutes)*60_000);
-    return()=>window.clearInterval(timer);
-  },[session,stockSync.configured,stockSync.syncMinutes,syncStockFromErp]);
+  }, [session,synchronizeProgram,settings.syncIntervalSeconds]);
   useEffect(() => {
     void fetch("/api/auth", { cache: "no-store" })
       .then(async (r) => {
@@ -1241,23 +1077,16 @@ export default function Home() {
   }, []);
   useEffect(() => {
     if (!session) return;
-    let cancelled = false;
-    const hydrate = async () => {
-      // La pantalla de acceso no dispara ninguna consulta costosa. Después de
-      // autenticar, la carga se hace en etapas para no saturar el Worker.
+    let active=true;
+    void (async()=>{
       await loadSettings();
-      if (cancelled) return;
-      await refreshProgram(false,true);
-      if (cancelled) return;
-      await Promise.all([loadBoms(), loadStock(),loadStockSyncStatus(),loadAssistantStatus()]);
-      if (cancelled) return;
-      await loadRequirements();
-    };
-    void hydrate();
-    return () => {
-      cancelled = true;
-    };
-  }, [session, loadBoms, loadStock, loadStockSyncStatus,loadAssistantStatus,loadRequirements,loadSettings,refreshProgram]);
+      if(!active)return;
+      await synchronizeProgram();
+      if(!active)return;
+      await Promise.all([loadBoms(), loadStock(), loadRequirements()]);
+    })();
+    return()=>{active=false;};
+  }, [session, loadBoms, loadStock, loadRequirements,loadSettings,synchronizeProgram]);
 
   const canAccess = (target: string) =>
     session?.role === "admin" ||
@@ -1266,31 +1095,40 @@ export default function Home() {
   const askAssistant = async (question: string) => {
     const clean = question.trim();
     if (!clean||chatLoading) return;
-    setChatMessages((messages) => [
-      ...messages,
-      { from: "user", text: clean },
-    ]);
+    const dateTime=(value:string)=>{
+      const parsed=new Date(value);
+      return Number.isNaN(parsed.getTime())?"sin fecha disponible":new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"short"}).format(parsed);
+    };
+    const context:GeneralAssistantContext={
+      now:new Intl.DateTimeFormat("es-AR",{dateStyle:"full",timeStyle:"short"}).format(new Date()),
+      synchronized:sourceState.live,
+      fetchedAt:dateTime(sourceState.fetchedAt),
+      operations:records.length,
+      weeks:weeks.length,
+      completedOperations:records.filter(record=>record.completed).length,
+      mappedOperations:requirementState.mapped,
+      blockedOperations:requirementState.blocked,
+      shortages:shortages.length,
+      stockItems:stock.length,
+      changes:{
+        added:programChange.added,
+        modified:programChange.modified,
+        removed:programChange.removed,
+        detectedAt:programChange.detectedAt,
+      },
+    };
+    setChatMessages(messages=>[...messages,{from:"user",text:clean}]);
     setChatInput("");
     setChatLoading(true);
+    let answer=generalAssistantFallback(clean,context);
     try{
-      const response=await fetch("/api/assistant",{
-        method:"POST",
-        headers:{"content-type":"application/json"},
-        body:JSON.stringify({question:clean,currentView:view}),
-      });
-      const payload=await responseJson<{answer?:string;mode?:"ai"|"guided";notice?:string;error?:string}>(response);
-      if(!response.ok||!payload.answer)throw new Error(payload.error||"No se pudo consultar el asistente.");
-      setChatMode(payload.mode??"guided");
-      setChatMessages(messages=>[
-        ...messages,
-        {from:"bot",text:payload.answer!},
-      ]);
-    }catch(error){
-      setChatMessages(messages=>[
-        ...messages,
-        {from:"bot",text:error instanceof Error?error.message:"No se pudo consultar el asistente."},
-      ]);
+      const response=await fetch("/api/assistant",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({question:clean,context})});
+      const payload=await responseJson<{answer?:string;error?:string}>(response);
+      if(response.ok&&payload.answer)answer=payload.answer;
+    }catch{
+      // La respuesta local mantiene disponible el asistente aunque falle la IA.
     }finally{
+      setChatMessages(messages=>[...messages,{from:"bot",text:answer}]);
       setChatLoading(false);
     }
   };
@@ -1392,7 +1230,7 @@ export default function Home() {
             ["resumen", "Resumen"],
             ["programacion", "Programación"],
             ["productos", "Productos"],
-            ["bom", "BOM"],
+            ["bom", "Ficha técnica"],
             ["consumos", "Consumos"],
             ["stock", "Stock"],
             ["faltantes", "Faltantes"],
@@ -1476,7 +1314,7 @@ export default function Home() {
               </div>
               <button
                 className="refresh-button"
-                onClick={() => void refreshProgram(true)}
+                onClick={() => void synchronizeProgram(true)}
                 disabled={refreshing}
               >
                 <Icon name="sync" />{" "}
@@ -1625,7 +1463,7 @@ export default function Home() {
                           <span
                             className={String(tone)}
                             style={{
-                              width: `${selected.operations ? Math.max(4, (Number(value) / selected.operations) * 100) : 0}%`,
+                              width: `${Math.max(4, (Number(value) / selected.operations) * 100)}%`,
                             }}
                           />
                         </span>
@@ -1649,7 +1487,7 @@ export default function Home() {
                     </h2>
                     <p>
                       {requirementState.loading
-                        ? "Actualizando BOM, stock y programa."
+                        ? "Actualizando fichas técnicas, stock y programa."
                         : `${requirementState.mapped} operaciones calculadas con el programa vigente.`}
                     </p>
                   </div>
@@ -1666,7 +1504,7 @@ export default function Home() {
                   <div className={requirementState.mapped > 0 ? "ready" : ""}>
                     <span>2</span>
                     <div>
-                      <strong>Fichas técnicas BOM</strong>
+                      <strong>Fichas técnicas</strong>
                       <small>
                         {bomProducts.length} aprobadas ·{" "}
                         {requirementState.provisional} provisionales del Sheet
@@ -1795,7 +1633,7 @@ export default function Home() {
                   <strong>
                     {missingCodeRecords.length} incidencia crítica
                   </strong>
-                  <small>Impide relacionar una fila con su BOM</small>
+                  <small>Impide relacionar una fila con su ficha técnica</small>
                 </div>
               </article>
             </div>
@@ -1814,7 +1652,7 @@ export default function Home() {
                     <p>{sourceState.notice}</p>
                   </div>
                   <button
-                    onClick={() => void refreshProgram(true)}
+                    onClick={() => void synchronizeProgram(true)}
                     disabled={refreshing}
                   >
                     {refreshing ? "Actualizando…" : "Actualizar"}
@@ -1947,6 +1785,7 @@ export default function Home() {
                                   <tr
                                     key={record.id}
                                     data-warning={!record.productCode}
+                                    data-completed={record.completed||undefined}
                                   >
                                     <td>{record.dateLabel || "—"}</td>
                                     <td>
@@ -1955,6 +1794,7 @@ export default function Home() {
                                       >
                                         {record.action}
                                       </span>
+                                      {record.completed&&<span className="completed-badge">REALIZADO</span>}
                                     </td>
                                     <td>{record.pin || "—"}</td>
                                     <td className="number-cell">
@@ -2036,7 +1876,7 @@ export default function Home() {
                   <div>
                     <strong>Códigos de insumos todavía incompletos</strong>
                     <p>
-                      Se resolverán con la BOM del ERP, sin depender de la carga
+                      Se resolverán con la ficha técnica del ERP, sin depender de la carga
                       tardía del Sheet.
                     </p>
                     <small>
@@ -2073,7 +1913,7 @@ export default function Home() {
               </div>
               <button
                 className="refresh-button"
-                onClick={() => void refreshProgram(true)}
+                onClick={() => void synchronizeProgram(true)}
               >
                 {refreshing ? "Actualizando…" : "Actualizar"}
               </button>
@@ -2194,7 +2034,7 @@ export default function Home() {
             <div className="page-heading compact">
               <div>
                 <p className="eyebrow">Prioridad 4 · Fichas técnicas</p>
-                <h1>Productos y BOM</h1>
+                <h1>Fichas técnicas</h1>
                 <p>
                   Definí qué consume cada producto según la operación
                   programada.
@@ -2214,7 +2054,7 @@ export default function Home() {
               </article>
               <article>
                 <strong>{bomProducts.length}</strong>
-                <span>BOM aprobadas</span>
+                <span>fichas aprobadas</span>
               </article>
               <article>
                 <strong>{productsWithSheetMaterials.length}</strong>
@@ -2298,60 +2138,12 @@ export default function Home() {
                   <div>
                     <h2>
                       {bomDraft.code
-                        ? `BOM ${bomDraft.code}`
+                        ? `Ficha ${bomDraft.code}`
                         : "Nueva ficha técnica"}
                     </h2>
                     <p>El consumo se expresa por botella o unidad producida.</p>
                   </div>
                 </div>
-                <div className="technical-sheet-upload">
-                  <input
-                    ref={technicalSheetRef}
-                    hidden
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    onChange={(event)=>void analyzeTechnicalSheet(event.target.files?.[0])}
-                  />
-                  <div className="technical-sheet-copy">
-                    <span className="pdf-badge">PDF</span>
-                    <div>
-                      <strong>Crear borrador desde una ficha técnica</strong>
-                      <p>La IA reconoce producto, insumos, cantidades y operación. Una persona siempre debe revisar antes de guardar.</p>
-                    </div>
-                  </div>
-                  <button
-                    className="export-button"
-                    disabled={technicalSheet.loading}
-                    onClick={()=>technicalSheetRef.current?.click()}
-                  >
-                    {technicalSheet.loading?"Analizando…":"Analizar ficha PDF"}
-                  </button>
-                </div>
-                {technicalSheet.fileName&&(
-                  <div className={`technical-sheet-result ${technicalSheet.analysis?"ready":"review"}`}>
-                    <div>
-                      <strong>{technicalSheet.fileName}</strong>
-                      <p>{technicalSheet.message}</p>
-                      {technicalSheet.analysis&&(
-                        <small>
-                          Confianza estimada: {Math.round(technicalSheet.analysis.confidence*100)}% · {technicalSheet.analysis.items.length} insumos
-                        </small>
-                      )}
-                    </div>
-                    {technicalSheet.analysis&&(
-                      <>
-                        {technicalSheet.analysis.warnings.length>0&&(
-                          <ul>
-                            {technicalSheet.analysis.warnings.slice(0,5).map(warning=><li key={warning}>{warning}</li>)}
-                          </ul>
-                        )}
-                        <button className="primary-button" onClick={applyTechnicalSheet}>
-                          Usar este borrador
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
                 <div className="bom-form">
                   <div className="bom-fields">
                     <label>
@@ -2559,7 +2351,7 @@ export default function Home() {
                 <p className="eyebrow">Prioridad 5 · Motor de cálculo</p>
                 <h1>Consumo de insumos</h1>
                 <p>
-                  Demanda calculada desde el programa vigente y las BOM
+                  Demanda calculada desde el programa vigente y las fichas técnicas
                   aprobadas.
                 </p>
               </div>
@@ -2573,7 +2365,7 @@ export default function Home() {
             <div className="bom-kpis">
               <article>
                 <strong>{requirementState.mapped}</strong>
-                <span>operaciones con BOM</span>
+                <span>operaciones con ficha técnica</span>
               </article>
               <article data-warning={requirementState.blocked > 0}>
                 <strong>{requirementState.blocked}</strong>
@@ -2584,6 +2376,7 @@ export default function Home() {
                 <span>insumos calculados</span>
               </article>
             </div>
+            {requirementState.completed>0&&<p className="bom-message">{requirementState.completed} operaciones tachadas en Google Sheets se muestran como realizadas y fueron excluidas del consumo.</p>}
             {requirementState.error && (
               <p className="bom-message consumption-error">
                 {requirementState.error}
@@ -2596,7 +2389,7 @@ export default function Home() {
                 </span>
                 <h2>Esperando fichas técnicas</h2>
                 <p>
-                  El motor está listo. Cargá al menos una BOM para comenzar a
+                  El motor está listo. Cargá al menos una ficha técnica para comenzar a
                   calcular consumos reales; no se generan valores estimados.
                 </p>
                 <button
@@ -2606,7 +2399,7 @@ export default function Home() {
                     void loadBoms();
                   }}
                 >
-                  Cargar primera BOM
+                  Cargar primera ficha
                 </button>
               </article>
             ) : (
@@ -2683,23 +2476,6 @@ export default function Home() {
                 </p>
               </div>
             </div>
-            <div className="stock-status-grid">
-              <article data-status={stockSummary.updatedAt?"ok":"review"}>
-                <span>Última fotografía</span>
-                <strong>{stockAgeLabel(stockSummary.ageMinutes)}</strong>
-                <small>{stockSummary.updatedAt?new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"short"}).format(new Date(stockSummary.updatedAt)):"Todavía no hay stock guardado"}</small>
-              </article>
-              <article data-status={stockSync.configured?"ok":"review"}>
-                <span>Fuente automática</span>
-                <strong>{stockSync.configured?"ERP conectado":"Pendiente de configurar"}</strong>
-                <small>{stockSync.configured?`Control compartido cada ${stockSync.syncMinutes} minutos`:"La importación por Excel sigue activa"}</small>
-              </article>
-              <article>
-                <span>Último origen</span>
-                <strong>{stockSummary.latestRun?.source==="erp"?"ERP":stockSummary.latestRun?.source==="manual"?"Corrección manual":stockSummary.latestRun?.source==="excel"?"Reporte Excel":"Sin registro"}</strong>
-                <small>{stockSummary.latestRun?.sourceName||"No se informaron cargas"}</small>
-              </article>
-            </div>
             <article className="stock-upload">
               <div className="upload-icon">
                 <Icon name="sheet" />
@@ -2729,17 +2505,7 @@ export default function Home() {
               >
                 {stockImport.fileName ? "Elegir otro archivo" : "Subir Excel"}
               </button>
-              {stockSync.configured&&(
-                <button
-                  className="export-button erp-sync-button"
-                  disabled={stockSync.loading}
-                  onClick={()=>void syncStockFromErp(true)}
-                >
-                  {stockSync.loading?"Sincronizando…":"Actualizar desde ERP"}
-                </button>
-              )}
             </article>
-            {stockSync.message&&<p className="stock-sync-message">{stockSync.message}</p>}
             {stockImport.fileName && (
               <article className="import-preview">
                 <div>
@@ -2912,13 +2678,14 @@ export default function Home() {
               </article>
               <article>
                 <strong>{requirementState.provisional}</strong>
-                <span>BOM provisionales del Sheet</span>
+                <span>fichas provisionales del Sheet</span>
               </article>
               <article data-warning={shortages.length > 0}>
                 <strong>{shortages.length}</strong>
                 <span>insumos a comprar</span>
               </article>
             </div>
+            {requirementState.completed>0&&<p className="bom-message">{requirementState.completed} operaciones ya realizadas fueron excluidas de faltantes y compras.</p>}
             {requirementState.error ? (
               <p className="bom-message consumption-error">
                 {requirementState.error}
@@ -3155,7 +2922,7 @@ export default function Home() {
                     {[
                       ["programacion", "Programación"],
                       ["productos", "Productos"],
-                      ["bom", "BOM"],
+                      ["bom", "Ficha técnica"],
                       ["consumos", "Consumos"],
                       ["stock", "Stock"],
                       ["faltantes", "Faltantes"],
@@ -3290,21 +3057,19 @@ export default function Home() {
               <div className="table-toolbar"><div><h2>Configuración operativa</h2><p>Solo el administrador puede modificar estos parámetros.</p></div><span className="row-status valid">Guardada en D1</span></div>
               <div className="admin-settings-form">
                 <label>ID de Google Sheets<input value={settingsDraft.spreadsheetId} onChange={event=>setSettingsDraft(current=>({...current,spreadsheetId:event.target.value}))}/><small>No se muestran ni modifican aquí las credenciales privadas de Google.</small></label>
-                <label>Sincronización automática (segundos)<input type="number" min="10" max="3600" value={settingsDraft.syncIntervalSeconds} onChange={event=>setSettingsDraft(current=>({...current,syncIntervalSeconds:Number(event.target.value)}))}/><small>Se recomienda 60 segundos para evitar el Error 1102 de Cloudflare.</small></label>
+                <label>Sincronización automática (segundos)<input type="number" min="10" max="3600" value={settingsDraft.syncIntervalSeconds} onChange={event=>setSettingsDraft(current=>({...current,syncIntervalSeconds:Number(event.target.value)}))}/><small>Valor recomendado: 30 segundos. Las solicitudes simultáneas comparten una sola actualización.</small></label>
                 <label>Caché compartida (segundos)<input type="number" min="0" max="300" value={settingsDraft.cacheSeconds} onChange={event=>setSettingsDraft(current=>({...current,cacheSeconds:Number(event.target.value)}))}/><small>Una sola lectura se reutiliza entre navegadores durante este período.</small></label>
                 <label>Depósitos incluidos<input value={settingsDraft.includedDepots.join(", ")} onChange={event=>setSettingsDraft(current=>({...current,includedDepots:event.target.value.split(",").map(value=>value.trim().toUpperCase()).filter(Boolean)}))}/><small>Separados por coma. 13 = Producción · C18 = Calidad · 2 = Depósito 2.</small></label>
               </div>
               <div className="settings-actions"><button className="primary-button" onClick={()=>void saveSettings()}>Guardar configuración</button>{settingsMessage&&<span>{settingsMessage}</span>}</div>
               <div className="admin-config-grid">
                 <section><span>Capacidad de importación</span><strong>Hasta 20.000 insumos</strong><small>La carga se realiza por lotes y verifica el total guardado.</small></section>
-                <section><span>Base de datos</span><strong>Cloudflare D1</strong><small>Usuarios, BOM, stock y distribución por depósito.</small></section>
-                <section><span>Asistente general</span><strong>{assistantConfigured?"IA configurada":"Modo guiado"}</strong><small>{assistantConfigured?"Responde con el estado actual del ERP.":"La aplicación responde con diagnósticos locales hasta configurar OPENAI_API_KEY."}</small></section>
-                <section><span>Stock desde ERP</span><strong>{stockSync.configured?"Conectado":"Carga por Excel"}</strong><small>{stockSync.configured?`Actualización controlada cada ${stockSync.syncMinutes} minutos.`:"Configurar ERP_STOCK_URL para habilitar el botón automático."}</small></section>
+                <section><span>Base de datos</span><strong>Cloudflare D1</strong><small>Usuarios, fichas técnicas, stock y distribución por depósito.</small></section>
               </div>
               <div className="admin-protected-note"><strong>Protección de credenciales</strong><p>El correo de servicio y la clave privada de Google permanecen como secretos de Cloudflare. Desde aquí se modifican solamente los parámetros operativos seguros.</p></div>
             </article>}
             {adminTab==="diagnostico"&&<article className="table-card admin-system-card">
-              <div className="table-toolbar"><div><h2>Estado de la integración</h2><p>Información de la sesión actual.</p></div><button className="export-button" disabled={refreshing} onClick={()=>void refreshProgram(true)}>{refreshing?"Probando…":"Probar conexión"}</button></div>
+              <div className="table-toolbar"><div><h2>Estado de la integración</h2><p>Información de la sesión actual.</p></div><button className="export-button" disabled={refreshing} onClick={()=>void synchronizeProgram(true)}>{refreshing?"Probando…":"Probar conexión"}</button></div>
               <div className="admin-diagnostic-grid">
                 <section data-ok={sourceState.live}><span>Conexión</span><strong>{sourceState.live?"Sincronizado en vivo":"Instantánea validada"}</strong><small>{sourceState.notice}</small></section>
                 <section><span>Última lectura</span><strong>{new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"medium"}).format(new Date(sourceState.fetchedAt))}</strong><small>Hora informada por la última respuesta válida.</small></section>
@@ -3327,7 +3092,7 @@ export default function Home() {
             <h1>Este módulo se habilitará después</h1>
             <p>
               Primero debemos validar completamente la lectura del programa.
-              Esto evita que BOM, stock y compras se construyan sobre datos
+              Esto evita que las fichas técnicas, el stock y las compras se construyan sobre datos
               interpretados de forma incorrecta.
             </p>
             <button
@@ -3352,12 +3117,12 @@ export default function Home() {
           <header>
             <div>
               <strong>Asistente de Insumos</strong>
-              <small>{chatMode==="ai"?"IA general · datos actuales del ERP":chatMode==="guided"?"Diagnóstico guiado · datos actuales":"Asistente general de la aplicación"}</small>
+              <small>Ayuda general con el estado actual del ERP</small>
             </div>
             <button onClick={() => setChatOpen(false)}>×</button>
           </header>
           <div className="chat-quick">
-            <button disabled={chatLoading} onClick={() => void askAssistant("Dame un resumen general de hoy")}>
+            <button disabled={chatLoading} onClick={() => void askAssistant("Dame un resumen de hoy")}>
               Resumen de hoy
             </button>
             <button
@@ -3368,11 +3133,16 @@ export default function Home() {
             </button>
             <button
               disabled={chatLoading}
-              onClick={() => void askAssistant("¿Cuál es el estado general del sistema?")}
+              onClick={() => void askAssistant("¿Cuál es el estado del sistema?")}
             >
               Estado del sistema
             </button>
-            <button disabled={chatLoading} onClick={()=>void askAssistant("¿Cómo funciona la aplicación?")}>Cómo funciona</button>
+            <button
+              disabled={chatLoading}
+              onClick={() => void askAssistant("¿Cómo funciona la aplicación?")}
+            >
+              Cómo funciona
+            </button>
           </div>
           <div className="chat-messages">
             {chatMessages.map((message, index) => (
@@ -3380,7 +3150,6 @@ export default function Home() {
                 {message.text}
               </div>
             ))}
-            {chatLoading&&<div className="chat-message bot chat-thinking">Revisando la aplicación…</div>}
           </div>
           <form
             onSubmit={(event) => {
@@ -3391,10 +3160,10 @@ export default function Home() {
             <input
               value={chatInput}
               onChange={(event) => setChatInput(event.target.value)}
-              placeholder="Preguntá por el estado o funcionamiento"
+              placeholder="Preguntá sobre el funcionamiento del ERP"
               disabled={chatLoading}
             />
-            <button disabled={chatLoading}>Enviar</button>
+            <button disabled={chatLoading}>{chatLoading?"Pensando…":"Enviar"}</button>
           </form>
         </aside>
       )}

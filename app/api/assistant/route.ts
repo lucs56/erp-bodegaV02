@@ -1,48 +1,24 @@
-import { buildAssistantSnapshot } from "../../../lib/assistant-context";
-import { generalAssistantAnswer } from "../../../lib/assistant-fallback";
-import { sessionUser } from "../../../lib/auth";
-import { readRuntimeEnv } from "../../../lib/runtime-env";
+import {
+  generalAssistantFallback,
+  type GeneralAssistantContext,
+} from "../../../lib/assistant";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
-  const user = await sessionUser(request);
-  if (!user?.active)
-    return Response.json({ error: "Sesión requerida." }, { status: 401 });
-  const runtime = await readRuntimeEnv(["OPENAI_API_KEY", "OPENAI_MODEL"]);
-  return Response.json({
-    configured: Boolean(runtime.OPENAI_API_KEY),
-    model: runtime.OPENAI_API_KEY
-      ? runtime.OPENAI_MODEL?.trim() || "gpt-5.6"
-      : null,
-  });
-}
-
 export async function POST(request: Request) {
   try {
-    const user = await sessionUser(request);
-    if (!user?.active)
-      return Response.json({ error: "Sesión requerida." }, { status: 401 });
-    const payload = (await request.json()) as {
+    const body = await request.json() as {
       question?: string;
-      currentView?: string;
+      context?: GeneralAssistantContext;
     };
-    const question = String(payload.question ?? "").trim().slice(0, 1_500);
-    if (!question)
-      return Response.json(
-        { error: "Escribí una pregunta sobre la aplicación." },
-        { status: 400 },
-      );
-    const snapshot = await buildAssistantSnapshot(payload.currentView);
-    const guided = generalAssistantAnswer(question, snapshot);
-    const runtime = await readRuntimeEnv(["OPENAI_API_KEY", "OPENAI_MODEL"]);
+    const question = String(body.question ?? "").trim().slice(0, 800);
+    if (!question || !body.context)
+      return Response.json({ error: "La consulta está incompleta." }, { status: 400 });
+
+    const fallback = generalAssistantFallback(question, body.context);
+    const runtime = await runtimeVariables();
     if (!runtime.OPENAI_API_KEY)
-      return Response.json({
-        answer: guided,
-        mode: "guided",
-        notice:
-          "Asistente guiado activo. Configurá OPENAI_API_KEY para habilitar respuestas generativas.",
-      });
+      return Response.json({ answer: fallback, mode: "local" });
 
     try {
       const response = await fetch("https://api.openai.com/v1/responses", {
@@ -52,81 +28,50 @@ export async function POST(request: Request) {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          model: runtime.OPENAI_MODEL?.trim() || "gpt-5.6",
-          max_output_tokens: 650,
-          input: [
-            {
-              role: "system",
-              content: [
-                {
-                  type: "input_text",
-                  text: [
-                    "Sos el asistente general del ERP de Insumos para Bodega.",
-                    "Respondé en español argentino, con tono humano, claro y breve.",
-                    "Tu alcance es explicar el funcionamiento general de la aplicación, su estado operativo, los cambios de programación, las alertas, los módulos y los próximos pasos.",
-                    "No hagas búsquedas puntuales de un código o insumo: indicá qué módulo y filtro debe usar la persona para ese detalle.",
-                    "No inventes datos ni afirmes que ejecutaste cambios. Usá exclusivamente la instantánea JSON suministrada.",
-                    "Si falta una integración, explicá qué alternativa operativa continúa disponible.",
-                    "Ante un error, diferenciá datos incompletos, configuración ausente y falla temporal.",
-                  ].join("\n"),
-                },
-              ],
-            },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "input_text",
-                  text: `Pregunta: ${question}\n\nEstado actual de la aplicación:\n${JSON.stringify(snapshot)}`,
-                },
-              ],
-            },
-          ],
+          model: runtime.OPENAI_MODEL || "gpt-5.6-sol",
+          instructions:
+            "Sos el asistente general de un ERP industrial de insumos para una bodega. Respondé en español argentino, de forma breve, cordial y concreta. Explicá el funcionamiento general, estado, sincronización, cambios, módulos y errores usando exclusivamente el contexto agregado. No respondas búsquedas puntuales de códigos o insumos y no inventes datos; para eso indicá el módulo y su buscador. Las filas tachadas en Google Sheets son operaciones realizadas y están excluidas de consumos, faltantes y compras.",
+          input: `CONTEXTO DEL ERP:\n${JSON.stringify(body.context)}\n\nPREGUNTA:\n${question}`,
+          max_output_tokens: 260,
         }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(30_000),
       });
-      if (!response.ok)
-        throw new Error(`OpenAI respondió ${response.status}.`);
-      const body = (await response.json()) as unknown;
-      const answer = responseText(body);
-      if (!answer) throw new Error("OpenAI no devolvió texto.");
-      return Response.json({ answer, mode: "ai" });
+      if (!response.ok) throw new Error(`OpenAI respondió ${response.status}.`);
+      const payload = await response.json() as {
+        output_text?: string;
+        output?: Array<{
+          content?: Array<{ type?: string; text?: string }>;
+        }>;
+      };
+      const answer =
+        payload.output_text?.trim() ||
+        payload.output
+          ?.flatMap((item) => item.content ?? [])
+          .find((item) => item.type === "output_text" && item.text)
+          ?.text?.trim();
+      return Response.json({ answer: answer || fallback, mode: answer ? "ai" : "local" });
     } catch {
-      return Response.json({
-        answer: guided,
-        mode: "guided",
-        notice:
-          "La IA no respondió en este momento; se usó el diagnóstico local del ERP.",
-      });
+      return Response.json({ answer: fallback, mode: "local" });
     }
-  } catch (error) {
-    return Response.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "No se pudo consultar el asistente.",
-      },
-      { status: 500 },
-    );
+  } catch {
+    return Response.json({ error: "No se pudo procesar la consulta." }, { status: 400 });
   }
 }
 
-function responseText(payload: unknown) {
-  if (!payload || typeof payload !== "object") return "";
-  const response = payload as {
-    output_text?: unknown;
-    output?: Array<{
-      content?: Array<{ type?: string; text?: unknown }>;
-    }>;
+async function runtimeVariables() {
+  const values: Record<string, string | undefined> = {
+    OPENAI_API_KEY:
+      typeof process !== "undefined" ? process.env.OPENAI_API_KEY : undefined,
+    OPENAI_MODEL:
+      typeof process !== "undefined" ? process.env.OPENAI_MODEL : undefined,
   };
-  if (typeof response.output_text === "string")
-    return response.output_text.trim();
-  return (response.output ?? [])
-    .flatMap((item) => item.content ?? [])
-    .filter((item) => item.type === "output_text" && typeof item.text === "string")
-    .map((item) => String(item.text).trim())
-    .filter(Boolean)
-    .join("\n");
+  try {
+    const workers = await import("cloudflare:workers");
+    const workerEnv = workers.env as unknown as Record<string, unknown>;
+    for (const name of Object.keys(values))
+      if (!values[name] && typeof workerEnv[name] === "string")
+        values[name] = workerEnv[name] as string;
+  } catch {
+    // La validación local no expone el entorno de Cloudflare.
+  }
+  return values;
 }

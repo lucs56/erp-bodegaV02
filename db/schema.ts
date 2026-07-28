@@ -18,24 +18,3 @@ export const stockDepotItems = sqliteTable("stock_depot_items", {
 export const appUsers = sqliteTable("app_users", {
   id: integer("id").primaryKey({ autoIncrement: true }), email: text("email").notNull(), username:text("username"),passwordHash:text("password_hash"),name: text("name").notNull(), role: text("role").notNull().default("planner"), active: integer("active",{mode:"boolean"}).notNull().default(true), permissions: text("permissions").notNull().default("programacion,productos,bom,consumos,stock,faltantes,compras"), updatedAt:text("updated_at").notNull(),
 },table=>[uniqueIndex("app_users_email_uq").on(table.email),uniqueIndex("app_users_username_uq").on(table.username)]);
-export const programChangeEvents = sqliteTable("program_change_events", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  detectedAt: text("detected_at").notNull(),
-  previousFetchedAt: text("previous_fetched_at"),
-  currentFetchedAt: text("current_fetched_at").notNull(),
-  addedCount: integer("added_count").notNull().default(0),
-  modifiedCount: integer("modified_count").notNull().default(0),
-  removedCount: integer("removed_count").notNull().default(0),
-  detailsJson: text("details_json").notNull(),
-});
-export const stockSyncRuns = sqliteTable("stock_sync_runs", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  source: text("source").notNull(),
-  sourceName: text("source_name"),
-  status: text("status").notNull(),
-  itemCount: integer("item_count").notNull().default(0),
-  depotRecordCount: integer("depot_record_count").notNull().default(0),
-  startedAt: text("started_at").notNull(),
-  completedAt: text("completed_at").notNull(),
-  message: text("message"),
-});

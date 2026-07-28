@@ -1,85 +1,24 @@
 # ERP de Insumos para Bodega
 
-## Mejoras de la versión 35: IA, fichas PDF y stock actualizado
+## Mejoras de esta entrega
 
-- El asistente ahora responde consultas **generales de la aplicación**: estado
-  operativo, cambios de programación, funcionamiento de módulos, fecha actual,
-  alertas y próximos pasos.
-- Si `OPENAI_API_KEY` está configurada, utiliza la API de OpenAI desde el
-  servidor. La clave nunca se envía al navegador. Sin esa clave, permanece
-  activo un diagnóstico guiado local y el resto del ERP funciona normalmente.
-- Productos y BOM permite seleccionar una ficha técnica PDF. La IA crea un
-  borrador con producto, insumos, cantidades, operación y advertencias. El PDF
-  nunca modifica una BOM por sí solo: un usuario debe revisar y guardar.
-- Los cambios de Google Sheets se registran en Cloudflare D1. De esta forma el
-  aviso y el asistente pueden explicar el mismo cambio desde distintos
-  navegadores.
-- Stock muestra fecha, antigüedad y origen de la última fotografía.
-- Se agregó un conector opcional de solo lectura al ERP. Admite JSON, CSV o
-  XLSX, reutiliza exactamente la misma validación de la carga manual y evita que
-  varios navegadores descarguen la misma fotografía dentro del intervalo.
-- La carga Excel actual, las correcciones manuales, los depósitos, faltantes,
-  compras, usuarios y permisos se mantienen sin cambios.
+- Sincronización inmediata al iniciar sesión, actualización automática cada 30 segundos y botón manual.
+- Una sola lectura de Google Sheets compartida entre Programación y el motor de cálculo, con reintento controlado para evitar respuestas 503 y Error 1102.
+- El último programa y el último cálculo correcto permanecen visibles si Google o Cloudflare demoran.
+- Las filas tachadas en Google Sheets se muestran como `REALIZADO` y quedan excluidas de Consumos, Faltantes y Compras.
+- El módulo visible `BOM` pasa a llamarse `Ficha técnica`; las rutas y tablas internas se conservan para no perder información.
+- Asistente general del ERP para explicar fecha, sincronización, cambios, estado y módulos. Funciona localmente y admite IA opcional mediante la API de OpenAI.
 
-### Configuración opcional en Cloudflare
+### IA opcional para el asistente
 
-En el Worker, agregue los siguientes secretos o variables:
+La aplicación funciona sin una clave de OpenAI. En ese caso utiliza respuestas
+locales verificables. Para habilitar respuestas más naturales, configurá estos
+secretos/variables en Cloudflare:
 
-| Variable | Uso |
-| --- | --- |
-| `OPENAI_API_KEY` | Activa la IA general y la lectura de fichas PDF. |
-| `OPENAI_MODEL` | Modelo utilizado. Si se omite, usa `gpt-5.6`. |
-| `ERP_STOCK_URL` | URL de solo lectura que entrega la fotografía completa de stock. |
-| `ERP_STOCK_TOKEN` | Token Bearer opcional del ERP. |
-| `ERP_STOCK_SYNC_MINUTES` | Intervalo compartido de actualización; mínimo 5, predeterminado 15. |
+- `OPENAI_API_KEY`: secreto de la API de OpenAI.
+- `OPENAI_MODEL`: opcional; el valor preparado es `gpt-5.6-sol`.
 
-No escriba secretos en `vite.config.ts` ni en archivos que se suben a Git.
-Puede copiar `.env.example` como referencia para desarrollo local.
-
-### Formato aceptado por el conector de stock
-
-El endpoint puede devolver:
-
-- el mismo reporte Excel/CSV usado por la carga manual; o
-- JSON con un arreglo directo o dentro de `items`, `rows`, `stock` o `data`.
-
-El JSON normalizado admite:
-
-```json
-{
-  "items": [
-    {
-      "materialCode": "10248",
-      "materialName": "Botella",
-      "category": "Botellas",
-      "quantity": 230000,
-      "unit": "unidad",
-      "depots": { "13": 30000, "2": 100000, "C18": 100000 }
-    }
-  ]
-}
-```
-
-El endpoint debe representar una **fotografía completa**, porque la
-sincronización reemplaza de forma verificada la fotografía anterior igual que
-el Excel manual.
-
-## Corrección de rendimiento v34
-
-- No descarga ni procesa Google Sheets mientras el usuario está en la pantalla de acceso.
-- Al ingresar muestra primero la última programación real guardada en D1 y luego sincroniza en segundo plano.
-- La carga inicial se ejecuta por etapas para evitar picos simultáneos de CPU en Cloudflare.
-- Stock, depósitos, BOM y faltantes utilizan índices en memoria en lugar de volver a recorrer miles de filas por cada insumo.
-- La importación masiva usa operaciones JSON por conjuntos, valida insumos y depósitos y evita miles de consultas individuales a D1.
-- El botón de actualización sigue forzando una lectura nueva del Sheet.
-- No incorpora planificación mensual ni estimados: conserva exclusivamente el ERP semanal de insumos.
-
-## Corrección de pantalla blanca v33
-
-- El tablero ya no intenta leer la etiqueta de una semana inexistente mientras Google Sheets está cargando o devuelve temporalmente cero semanas.
-- Muestra un estado seguro `Sin programación cargada` y mantiene disponible la interfaz.
-- Los gráficos evitan dividir por cero cuando todavía no hay operaciones.
-- El `401` de `/api/auth` continúa siendo la respuesta normal cuando no existe una sesión iniciada.
+Nunca coloques la clave real en `.env.example` ni la subas a Git.
 
 ## Mejoras de la versión 32
 
@@ -87,7 +26,7 @@ el Excel manual.
 - La configuración operativa es editable únicamente por administradores y se guarda en Cloudflare D1.
 - Permite configurar el ID del Sheet, los intervalos de sincronización y caché, y los depósitos incluidos.
 - La caché de programación es compartida en D1 para evitar reprocesamientos entre navegadores y reducir el riesgo del Error 1102.
-- Se recomiendan 60 segundos de sincronización y caché; el botón de actualización inmediata continúa disponible.
+- La configuración sigue siendo editable por el administrador. Esta entrega migra el valor anterior a 30 segundos de sincronización y 15 segundos de caché.
 - Las credenciales privadas de Google permanecen protegidas como secretos de Cloudflare.
 
 ## Mejoras de la versión 28

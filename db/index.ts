@@ -74,29 +74,6 @@ async function ensureSchema(database: D1Database) {
         value TEXT NOT NULL,
         fetched_at TEXT NOT NULL
       )`,
-      `CREATE TABLE IF NOT EXISTS program_change_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        detected_at TEXT NOT NULL,
-        previous_fetched_at TEXT,
-        current_fetched_at TEXT NOT NULL,
-        added_count INTEGER DEFAULT 0 NOT NULL,
-        modified_count INTEGER DEFAULT 0 NOT NULL,
-        removed_count INTEGER DEFAULT 0 NOT NULL,
-        details_json TEXT NOT NULL
-      )`,
-      "CREATE INDEX IF NOT EXISTS program_change_detected_idx ON program_change_events (detected_at)",
-      `CREATE TABLE IF NOT EXISTS stock_sync_runs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-        source TEXT NOT NULL,
-        source_name TEXT,
-        status TEXT NOT NULL,
-        item_count INTEGER DEFAULT 0 NOT NULL,
-        depot_record_count INTEGER DEFAULT 0 NOT NULL,
-        started_at TEXT NOT NULL,
-        completed_at TEXT NOT NULL,
-        message TEXT
-      )`,
-      "CREATE INDEX IF NOT EXISTS stock_sync_completed_idx ON stock_sync_runs (completed_at)",
     ];
 
     await database.batch(setupStatements.map((sql) => database.prepare(sql)));

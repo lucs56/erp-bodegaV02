@@ -4,10 +4,12 @@ import { parseProgramSheet, type ParsedWeek } from "./program-parser";
 import { readSettings } from "./app-settings";
 import { getD1Database } from "../db";
 import { struckRowsBySheet } from "./xlsx-strikethrough";
+import { fetchWithRetry } from "./resilient-fetch";
 
 const DEFAULT_SHEET_ID = "1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_REQUEST_TIMEOUT_MS = 10_000;
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 let cachedProgram:{value:LiveProgram;expiresAt:number}|null=null;
@@ -150,7 +152,7 @@ async function fetchLiveProgram(configuredSpreadsheetId:string): Promise<LivePro
 async function readPublicWorkbook(spreadsheetId:string):Promise<LiveProgram>{
   const url=new URL(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export`);
   url.searchParams.set("format","xlsx");url.searchParams.set("_",Date.now().toString());
-  const response=await fetch(url,{cache:"no-store",headers:{"cache-control":"no-cache, no-store",pragma:"no-cache"}});
+  const response=await googleFetch(url,{cache:"no-store",headers:{"cache-control":"no-cache, no-store",pragma:"no-cache"}});
   if(!response.ok)throw new Error(response.status===401||response.status===403?"Google Sheets no permite leer la programación. Compartila como lector mediante enlace.":`Google Sheets respondió ${response.status}.`);
   const workbook=XLSX.read(await response.arrayBuffer(),{type:"array",cellDates:true,cellStyles:true,bookFiles:true});
   const struckRows=struckRowsBySheet(workbook);
@@ -179,7 +181,7 @@ async function accessToken(email: string, privateKey: string) {
   );
   const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned));
   const assertion = `${unsigned}.${base64Url(new Uint8Array(signature))}`;
-  const response = await fetch(TOKEN_URL, {
+  const response = await googleFetch(TOKEN_URL, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
@@ -192,7 +194,7 @@ async function accessToken(email: string, privateKey: string) {
 }
 
 async function googleJson<T>(url: URL, token: string): Promise<T> {
-  const response = await fetch(url, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
+  const response = await googleFetch(url, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
   if (!response.ok) throw new Error(`No se pudo leer Google Sheets (${response.status}).`);
   return response.json() as Promise<T>;
 }
@@ -213,6 +215,13 @@ async function runtimeVariables() {
     // Node-based build validation does not expose the Cloudflare runtime module.
   }
   return values;
+}
+
+function googleFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetchWithRetry(input, init, {
+    timeoutMs: GOOGLE_REQUEST_TIMEOUT_MS,
+    maxRetries: 0,
+  });
 }
 
 function pemBytes(pem: string) {

@@ -16,6 +16,7 @@ import {
   calculateClientRequirements,
   type ClientStockItem,
 } from "../lib/client-requirements";
+import { fetchWithRetry, RequestTimeoutError } from "../lib/resilient-fetch";
 
 type View =
   | "resumen"
@@ -176,15 +177,6 @@ function depotLabel(depot:string){
 async function responseJson<T>(response:Response):Promise<T>{
   const text=await response.text();
   try{return JSON.parse(text) as T;}catch{throw new Error(response.status===503?"El servicio está ocupado. Se conservan los últimos datos válidos y se reintentará automáticamente.":`El servidor devolvió una respuesta inválida (${response.status}).`);}
-}
-
-async function fetchWithRetry(input:RequestInfo|URL,init?:RequestInit){
-  let response=await fetch(input,init);
-  if([429,503,504].includes(response.status)){
-    await new Promise(resolve=>window.setTimeout(resolve,800));
-    response=await fetch(input,init);
-  }
-  return response;
 }
 
 function firstShortageWeek(item: ShortageRequirement) {
@@ -1171,12 +1163,15 @@ export default function Home() {
               : "Se conserva la última lectura validada."),
         });
         return{changed,live:Boolean(payload.source?.live)};
-      } catch {
+      } catch (error) {
+        const timedOut = error instanceof RequestTimeoutError;
         setSourceState((current) => ({
           ...current,
           live: false,
           notice:
-            "No se pudo actualizar; se conservan la programación y los cálculos de la última lectura válida.",
+            timedOut
+              ? "Google Sheets demoró demasiado. Se conservan los últimos datos válidos y se volverá a intentar automáticamente."
+              : "No se pudo actualizar; se conservan la programación y los cálculos de la última lectura válida.",
         }));
         return{changed:false,live:false};
       } finally {

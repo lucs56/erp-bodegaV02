@@ -1,5 +1,13 @@
 # ERP de Insumos para Bodega
 
+## Mejora de estabilidad en Cloudflare (v38)
+
+Las pantallas **Consumos**, **Faltantes** y **Compras** calculan sus resultados
+en el navegador usando la programación, las fichas técnicas y el stock que ya
+fueron sincronizados. Esto elimina consultas repetidas y pesadas a
+`/api/requirements`, evita errores 503 por límite de CPU y conserva la misma
+lógica de operaciones realizadas, stock por depósito y faltantes.
+
 ## Mejoras de esta entrega
 
 - Sincronización inmediata al iniciar sesión, actualización automática cada 30 segundos y botón manual.

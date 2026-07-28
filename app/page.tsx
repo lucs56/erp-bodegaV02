@@ -12,6 +12,10 @@ import {
   generalAssistantFallback,
   type GeneralAssistantContext,
 } from "../lib/assistant";
+import {
+  calculateClientRequirements,
+  type ClientStockItem,
+} from "../lib/client-requirements";
 
 type View =
   | "resumen"
@@ -277,6 +281,7 @@ export default function Home() {
   const [settingsDraft,setSettingsDraft]=useState(DEFAULT_OPERATIONAL_SETTINGS);
   const [settingsMessage,setSettingsMessage]=useState("");
   const [bomProducts, setBomProducts] = useState<BomProduct[]>([]);
+  const bomProductsRef = useRef<BomProduct[]>([]);
   const [bomLoading, setBomLoading] = useState(false);
   const [bomMessage, setBomMessage] = useState("");
   const [bomQuery, setBomQuery] = useState("");
@@ -307,16 +312,8 @@ export default function Home() {
     changedIds: [] as string[],
     changedWeekIds: [] as string[],
   });
-  const [stock, setStock] = useState<
-    Array<{
-      materialCode: string;
-      materialName: string;
-      category: string;
-      quantity: number;
-      unit: string;
-      depots:Record<string,number>;
-    }>
-  >([]);
+  const [stock, setStock] = useState<ClientStockItem[]>([]);
+  const stockRef = useRef<ClientStockItem[]>([]);
   const [stockQuery, setStockQuery] = useState("");
   const [stockDraft, setStockDraft] = useState({
     materialCode: "",
@@ -604,7 +601,9 @@ export default function Home() {
       };
       if (!response.ok)
         throw new Error(payload.error || "No se pudieron cargar las fichas técnicas.");
-      setBomProducts(payload.products ?? []);
+      const products = payload.products ?? [];
+      bomProductsRef.current = products;
+      setBomProducts(products);
       setBomMessage("");
     } catch (error) {
       setBomMessage(
@@ -666,30 +665,20 @@ export default function Home() {
     const operation=(async()=>{
       setRequirementState((state) => ({ ...state, loading: true, error: "" }));
       try {
-        const response = await fetchWithRetry("/api/requirements", { cache: "no-store" });
-        const payload = await responseJson<{
-          requirements?: Requirement[];
-          shortages?: Array<
-            Requirement & { available: number; shortage: number }
-          >;
-          mappedOperations?: number;
-          blockedOperations?: number;
-          completedOperations?: number;
-          provisionalProducts?: number;
-          stockItems?: number;
-          error?: string;
-        }>(response);
-        if (!response.ok)
-          throw new Error(payload.error || "No se pudo calcular el consumo.");
-        setRequirements(payload.requirements ?? []);
-        setShortages(payload.shortages ?? []);
+        const payload = calculateClientRequirements(
+          recordsRef.current,
+          bomProductsRef.current,
+          stockRef.current,
+        );
+        setRequirements(payload.requirements);
+        setShortages(payload.shortages);
         setRequirementState({
           loading: false,
-          mapped: payload.mappedOperations ?? 0,
-          blocked: payload.blockedOperations ?? 0,
-          completed: payload.completedOperations ?? 0,
-          provisional: payload.provisionalProducts ?? 0,
-          stockItems: payload.stockItems ?? 0,
+          mapped: payload.mappedOperations,
+          blocked: payload.blockedOperations,
+          completed: payload.completedOperations,
+          provisional: payload.provisionalProducts,
+          stockItems: payload.stockItems,
           error: "",
         });
       } catch (error) {
@@ -697,7 +686,9 @@ export default function Home() {
           ...state,
           loading: false,
           error:
-            `${error instanceof Error ? error.message : "No se pudo calcular el consumo."} Los valores que ves corresponden al último cálculo correcto.`,
+            error instanceof Error
+              ? error.message
+              : "No se pudo calcular el consumo.",
         }));
       }
     })();
@@ -706,8 +697,12 @@ export default function Home() {
   }, []);
   const loadStock = useCallback(async () => {
     const r = await fetch("/api/stock", { cache: "no-store" });
-    const p = await responseJson<{ items?: typeof stock }>(r);
-    if (r.ok) setStock(p.items ?? []);
+    const p = await responseJson<{ items?: ClientStockItem[] }>(r);
+    if (r.ok) {
+      const items = p.items ?? [];
+      stockRef.current = items;
+      setStock(items);
+    }
   }, []);
   const saveStock = async () => {
     const r = await fetch("/api/stock", {
@@ -1094,7 +1089,9 @@ export default function Home() {
       if(!active)return;
       await synchronizeProgram();
       if(!active)return;
-      await Promise.all([loadBoms(), loadStock(), loadRequirements()]);
+      await Promise.all([loadBoms(), loadStock()]);
+      if(!active)return;
+      await loadRequirements();
     })();
     return()=>{active=false;};
   }, [session, loadBoms, loadStock, loadRequirements,loadSettings,synchronizeProgram]);

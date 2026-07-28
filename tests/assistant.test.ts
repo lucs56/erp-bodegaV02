@@ -77,3 +77,41 @@ test("filtra faltantes por tipo de insumo", () => {
   assert.match(answer, /20393/);
   assert.doesNotMatch(answer, /10222A/);
 });
+
+test("responde una consulta puntual por código con datos del ERP", () => {
+  const answer = generalAssistantFallback("20383", {
+    ...context,
+    materialQuery: "20383",
+    materialMatches: [
+      {
+        materialCode: "20383",
+        materialName: "Tapón screw",
+        category: "Tapones",
+        unit: "unidad",
+        required: 150000,
+        available: 100000,
+        shortage: 50000,
+        depots: { "13": 30000, "2": 50000, C18: 20000 },
+        weeks: ["27–31 Jul", "03–07 Ago"],
+        products: ["3392-NV - ALAMOS WOTM"],
+        inCurrentProgram: true,
+        inStock: true,
+        inTechnicalSheet: true,
+      },
+    ],
+  });
+  assert.match(answer, /20383 corresponde a Tapón screw/i);
+  assert.match(answer, /necesita 150\.000/i);
+  assert.match(answer, /13 \(Producción\): 30\.000/);
+  assert.match(answer, /Faltan 50\.000/i);
+  assert.match(answer, /ALAMOS WOTM/);
+});
+
+test("informa claramente cuando un código no existe", () => {
+  const answer = generalAssistantFallback("99999", {
+    ...context,
+    materialQuery: "99999",
+    materialMatches: [],
+  });
+  assert.match(answer, /No encontré el código 99999/i);
+});

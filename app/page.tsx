@@ -141,6 +141,33 @@ function formatCalculationTime(value: string) {
       }).format(date);
 }
 
+function materialCodeKey(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .toUpperCase();
+}
+
+function detectMaterialCode(question: string, knownCodes: Map<string, string>) {
+  const candidates = question
+    .split(/\s+/)
+    .map((value) => materialCodeKey(value))
+    .filter((value) => value.length >= 3 && /\d/.test(value));
+  const known = candidates.find((candidate) => knownCodes.has(candidate));
+  if (known) return knownCodes.get(known) ?? "";
+  const normalizedQuestion = question
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+  const explicitLookup = /\b(CODIGO|INSUMO|MATERIAL|PRODUCTO)\b/.test(
+    normalizedQuestion,
+  );
+  const onlyCode =
+    candidates.length === 1 && materialCodeKey(question) === candidates[0];
+  return explicitLookup || onlyCode ? (candidates[0] ?? "") : "";
+}
+
 function depotLabel(depot:string){
   const labels:Record<string,string>={"13":"13 (Producción)","2":"2 (Depósito 2)",C18:"C18 (Calidad)",R18:"R18", "2OB":"2OB"};
   return labels[depot.trim().toUpperCase()]??depot;
@@ -448,7 +475,7 @@ export default function Home() {
   >([
     {
       from: "bot",
-      text: "¡Hola! Soy el asistente general del ERP. Puedo decirte si la sincronización está activa, qué cambió, qué faltantes hay por tipo y cómo funciona cada módulo.",
+      text: "¡Hola! Soy el asistente operativo del ERP. Puedo decirte si la sincronización está activa, qué cambió, qué faltantes hay por tipo y consultar un insumo escribiendo directamente su código.",
     },
   ]);
   const weeks = useMemo(() => summarizeWeeks(records), [records]);
@@ -1256,6 +1283,74 @@ export default function Home() {
       const parsed=new Date(value);
       return Number.isNaN(parsed.getTime())?"sin fecha disponible":new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"short"}).format(parsed);
     };
+    const knownMaterialCodes=new Map<string,string>();
+    const registerMaterialCode=(code:string)=>{
+      const key=materialCodeKey(code);
+      if(key&&!knownMaterialCodes.has(key))knownMaterialCodes.set(key,code);
+    };
+    requirements.forEach(item=>registerMaterialCode(item.materialCode));
+    shortages.forEach(item=>registerMaterialCode(item.materialCode));
+    stock.forEach(item=>registerMaterialCode(item.materialCode));
+    bomProducts.forEach(product=>product.items.forEach(item=>registerMaterialCode(item.materialCode)));
+    const materialQuery=detectMaterialCode(clean,knownMaterialCodes);
+    const materialKey=materialCodeKey(materialQuery);
+    const requirement=materialKey
+      ? requirements.find(item=>materialCodeKey(item.materialCode)===materialKey)
+      : undefined;
+    const stockItem=materialKey
+      ? stock.find(item=>materialCodeKey(item.materialCode)===materialKey)
+      : undefined;
+    const shortage=materialKey
+      ? shortages.find(item=>materialCodeKey(item.materialCode)===materialKey)
+      : undefined;
+    const technicalUses=materialKey
+      ? bomProducts.flatMap(product=>
+          product.items
+            .filter(item=>materialCodeKey(item.materialCode)===materialKey)
+            .map(item=>({product,item})),
+        )
+      : [];
+    const technicalItem=technicalUses[0]?.item;
+    const available=Number(stockItem?.quantity??shortage?.available??0);
+    const required=Number(requirement?.total??shortage?.total??0);
+    const materialMatches=materialQuery&&(requirement||stockItem||technicalItem)
+      ? [{
+          materialCode:
+            requirement?.materialCode??
+            stockItem?.materialCode??
+            technicalItem?.materialCode??
+            materialQuery,
+          materialName:
+            stockItem?.materialName??
+            requirement?.materialName??
+            technicalItem?.materialName??
+            "",
+          category:
+            stockItem?.category??
+            requirement?.category??
+            technicalItem?.category??
+            "",
+          unit:
+            requirement?.unit??
+            stockItem?.unit??
+            technicalItem?.unit??
+            "unidad",
+          required,
+          available,
+          shortage:Math.max(0,required-available),
+          depots:stockItem?.depots??shortage?.depots??{},
+          weeks:(requirement?.weeks??shortage?.weeks??[]).map(week=>week.weekLabel),
+          products:[
+            ...(requirement?.products??shortage?.products??[]).map(product=>
+              `${product.productCode} - ${product.productName}`,
+            ),
+            ...technicalUses.map(({product})=>`${product.code} - ${product.name}`),
+          ],
+          inCurrentProgram:Boolean(requirement||shortage),
+          inStock:Boolean(stockItem),
+          inTechnicalSheet:technicalUses.length>0,
+        }]
+      : [];
     const context:GeneralAssistantContext={
       now:new Intl.DateTimeFormat("es-AR",{dateStyle:"full",timeStyle:"short"}).format(new Date()),
       synchronized:sourceState.live,
@@ -1279,6 +1374,8 @@ export default function Home() {
           shortage:item.shortage,
           weeks:item.weeks.map(week=>week.weekLabel),
         })),
+      materialQuery,
+      materialMatches,
       calculation:{
         running:calculationStatus.running,
         phase:calculationStatus.phase,
@@ -3373,7 +3470,7 @@ export default function Home() {
             <input
               value={chatInput}
               onChange={(event) => setChatInput(event.target.value)}
-              placeholder="Preguntá sobre el funcionamiento del ERP"
+              placeholder="Preguntá o escribí un código de insumo"
               disabled={chatLoading}
             />
             <button disabled={chatLoading}>{chatLoading?"Pensando…":"Enviar"}</button>

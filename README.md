@@ -1,5 +1,17 @@
 # ERP de Insumos para Bodega
 
+## Consultas de insumos por código (v40)
+
+- El asistente acepta un código escrito directamente, por ejemplo `20383`.
+- Busca el insumo en fichas técnicas, consumo calculado y stock.
+- Informa descripción, categoría, necesidad del programa, stock total,
+  distribución por depósito, faltante o saldo, semanas y productos relacionados.
+- Si el código no existe, lo informa claramente en lugar de devolver una
+  respuesta general.
+- Las consultas por código se resuelven con datos verificables del ERP incluso
+  sin una clave de IA. La IA opcional se mantiene para redactar respuestas
+  generales más naturales.
+
 ## Actualización completa y asistente operativo (v39)
 
 - El botón de Consumos, Faltantes y Compras ahora se llama **Actualizar y

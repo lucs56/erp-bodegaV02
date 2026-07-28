@@ -9,6 +9,22 @@ export type GeneralAssistantShortage = {
   weeks: string[];
 };
 
+export type GeneralAssistantMaterial = {
+  materialCode: string;
+  materialName: string;
+  category: string;
+  unit: string;
+  required: number;
+  available: number;
+  shortage: number;
+  depots: Record<string, number>;
+  weeks: string[];
+  products: string[];
+  inCurrentProgram: boolean;
+  inStock: boolean;
+  inTechnicalSheet: boolean;
+};
+
 export type GeneralAssistantContext = {
   now: string;
   synchronized: boolean;
@@ -21,6 +37,8 @@ export type GeneralAssistantContext = {
   shortages: number;
   stockItems: number;
   shortageItems?: GeneralAssistantShortage[];
+  materialQuery?: string;
+  materialMatches?: GeneralAssistantMaterial[];
   calculation?: {
     running: boolean;
     phase: string;
@@ -77,6 +95,8 @@ export function generalAssistantFallback(
       : "No hay cambios pendientes de revisar desde la última lectura comparada.";
   }
 
+  if (context.materialQuery) return materialAnswer(context);
+
   if (/FALTANT|FALTAR|COMPRA|COMPRAR/.test(term))
     return shortageAnswer(term, context);
 
@@ -105,7 +125,65 @@ export function generalAssistantFallback(
   if (/PROGRAMA|PRODUCCION|OPERACION|SEMANA/.test(term))
     return `La lectura actual contiene ${context.operations} operaciones en ${context.weeks} semanas. ${context.completedOperations} están marcadas como realizadas y se excluyen de consumos, faltantes y compras.`;
 
-  return "Puedo responder sobre sincronización, cambios del programa, estado del cálculo, fichas técnicas, stock, faltantes por tipo y compras. También puedo explicarte para qué sirve cada módulo.";
+  return "Puedo responder sobre sincronización, cambios del programa, estado del cálculo, fichas técnicas, stock, faltantes y compras. También podés escribirme directamente un código de insumo para consultar su necesidad, stock y faltante.";
+}
+
+function materialAnswer(context: GeneralAssistantContext) {
+  const matches = context.materialMatches ?? [];
+  if (!matches.length)
+    return context.stockItems || context.mappedOperations
+      ? `No encontré el código ${context.materialQuery} en el stock, las fichas técnicas ni las necesidades del programa actual. Revisá que esté escrito exactamente como aparece en el ERP.`
+      : `Todavía se están cargando los datos del ERP y no pude buscar el código ${context.materialQuery}. Esperá a que termine la sincronización o usá “Actualizar y recalcular” y volvé a consultarlo.`;
+
+  const item = matches[0];
+  const identity = `${item.materialCode} corresponde a ${item.materialName || "un insumo sin descripción"}${item.category ? ` (${item.category})` : ""}.`;
+  const program = item.inCurrentProgram
+    ? `El programa vigente necesita ${formatQuantity(item.required)} ${item.unit}.`
+    : "No tiene consumo calculado en el programa vigente.";
+  const stock = item.inStock
+    ? `El stock disponible es ${formatQuantity(item.available)} ${item.unit}${depotSummary(item.depots)}.`
+    : "No figura con stock disponible cargado.";
+  const balance = item.shortage > 0
+    ? `Faltan ${formatQuantity(item.shortage)} ${item.unit}.`
+    : item.inCurrentProgram
+      ? `El stock cubre la necesidad y deja un saldo estimado de ${formatQuantity(Math.max(0, item.available - item.required))} ${item.unit}.`
+      : "";
+  const use =
+    item.products.length || item.weeks.length
+      ? `${item.products.length ? `Se usa en ${summarizeNames(item.products)}.` : ""}${item.weeks.length ? ` Semanas: ${item.weeks.join(", ")}.` : ""}`
+      : item.inTechnicalSheet
+        ? "Está incluido en al menos una ficha técnica, aunque hoy no tenga consumo."
+        : "";
+
+  return `Según el último cálculo válido: ${identity} ${program} ${stock} ${balance} ${use}`
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function depotSummary(depots: Record<string, number>) {
+  const labels: Record<string, string> = {
+    "13": "13 (Producción)",
+    "2": "2 (Depósito 2)",
+    C18: "C18 (Calidad)",
+    R18: "R18",
+    "2OB": "2OB",
+  };
+  const values = Object.entries(depots)
+    .filter(([, quantity]) => Number(quantity) !== 0)
+    .sort(([left], [right]) => left.localeCompare(right, "es"))
+    .map(([depot, quantity]) => {
+      const key = depot.trim().toUpperCase();
+      return `${labels[key] ?? depot}: ${formatQuantity(quantity)}`;
+    });
+  return values.length ? ` (${values.join(" · ")})` : "";
+}
+
+function summarizeNames(values: string[]) {
+  const unique = [...new Set(values)].filter(Boolean);
+  const visible = unique.slice(0, 4);
+  return unique.length > visible.length
+    ? `${visible.join(", ")} y ${unique.length - visible.length} más`
+    : visible.join(", ");
 }
 
 function shortageAnswer(term: string, context: GeneralAssistantContext) {

@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { parseProgramSheet, type ParsedWeek } from "./program-parser";
 import { readSettings } from "./app-settings";
 import { getD1Database } from "../db";
+import { storeProgramChange } from "./program-changes";
 
 const DEFAULT_SHEET_ID = "1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
@@ -30,7 +31,21 @@ export async function readLiveProgram(force=false): Promise<LiveProgram | null> 
 
 async function readSharedCache(maxAgeSeconds:number){try{const db=await getD1Database();const row=await db.prepare("SELECT value,fetched_at FROM program_cache WHERE key = ?").bind("live").first<{value:string;fetched_at:string}>();if(row&&Date.now()-new Date(row.fetched_at).getTime()<maxAgeSeconds*1000)return JSON.parse(row.value) as LiveProgram;}catch{}return null;}
 export async function readLastStoredProgram(){try{const db=await getD1Database();const row=await db.prepare("SELECT value FROM program_cache WHERE key = ?").bind("live").first<{value:string}>();return row?.value?JSON.parse(row.value) as LiveProgram:null;}catch{return null;}}
-async function writeSharedCache(value:LiveProgram){try{const db=await getD1Database();await db.prepare("INSERT INTO program_cache (key,value,fetched_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,fetched_at=excluded.fetched_at").bind("live",JSON.stringify(value),value.fetchedAt).run();}catch{}}
+async function writeSharedCache(value:LiveProgram){
+  try{
+    const db=await getD1Database();
+    const previousRow=await db.prepare("SELECT value FROM program_cache WHERE key = ?").bind("live").first<{value:string}>();
+    if(previousRow?.value){
+      try{
+        const previous=JSON.parse(previousRow.value) as LiveProgram;
+        await storeProgramChange(previous,value);
+      }catch{
+        // Una instantánea anterior inválida no debe bloquear la actualización.
+      }
+    }
+    await db.prepare("INSERT INTO program_cache (key,value,fetched_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,fetched_at=excluded.fetched_at").bind("live",JSON.stringify(value),value.fetchedAt).run();
+  }catch{}
+}
 
 async function fetchLiveProgram(configuredSpreadsheetId:string): Promise<LiveProgram | null> {
   const runtimeEnv = await runtimeVariables();

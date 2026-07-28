@@ -1,6 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { stockDepotItems, stockItems } from "../../../db/schema";
+import { readStockSyncStatus, recordStockSyncRun } from "../../../lib/stock-store";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,7 @@ export async function GET() {
         ...item,
         depots: depotsByMaterial.get(item.materialCode) ?? {},
       })),
+      summary: await readStockSyncStatus(),
     });
   } catch (error) {
     return Response.json(
@@ -70,13 +72,14 @@ export async function POST(request: Request) {
       .from(stockItems)
       .where(eq(stockItems.materialCode, materialCode))
       .limit(1);
+    const updatedAt = new Date().toISOString();
     const values = {
       materialCode,
       materialName,
       category: payload.category?.trim() || "Otros",
       quantity,
       unit: payload.unit?.trim() || "unidad",
-      updatedAt: new Date().toISOString(),
+      updatedAt,
     };
     if (old.length)
       await db
@@ -84,6 +87,15 @@ export async function POST(request: Request) {
         .set(values)
         .where(eq(stockItems.id, old[0].id));
     else await db.insert(stockItems).values(values);
+    await recordStockSyncRun({
+      source: "manual",
+      sourceName: materialCode,
+      status: "success",
+      itemCount: 1,
+      startedAt: updatedAt,
+      completedAt: updatedAt,
+      message: "Corrección manual de un insumo.",
+    });
     return Response.json({ ok: true });
   } catch (error) {
     return Response.json(

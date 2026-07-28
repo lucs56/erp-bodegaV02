@@ -8,6 +8,7 @@ import {
 import { diffProgram } from "../lib/program-diff";
 import { parseStockRows, type StockImportItem } from "../lib/stock-import";
 import { suggestBomFromProgram } from "../lib/bom-suggestions";
+import type { TechnicalSheetAnalysis } from "../lib/technical-sheet";
 
 type View =
   | "resumen"
@@ -50,6 +51,25 @@ type ShortageRequirement = Requirement & {
   available: number;
   depots?:Record<string,number>;
   shortage: number;
+};
+type StockSummary = {
+  itemCount: number;
+  updatedAt: string | null;
+  ageMinutes: number | null;
+  latestRun: {
+    source: string;
+    sourceName: string | null;
+    status: string;
+    itemCount: number;
+    completedAt: string;
+    message: string | null;
+  } | null;
+};
+type StockSyncState = {
+  configured: boolean;
+  syncMinutes: number;
+  loading: boolean;
+  message: string;
 };
 const emptyBomItem = (): BomItem => ({
   materialCode: "",
@@ -120,6 +140,22 @@ function formatNumber(value: number) {
 function depotLabel(depot:string){
   const labels:Record<string,string>={"13":"13 (Producción)","2":"2 (Depósito 2)",C18:"C18 (Calidad)",R18:"R18", "2OB":"2OB"};
   return labels[depot.trim().toUpperCase()]??depot;
+}
+
+function stockAgeLabel(minutes:number|null){
+  if(minutes===null)return"Sin carga registrada";
+  if(minutes<60)return`Actualizado hace ${minutes} min`;
+  if(minutes<1440)return`Actualizado hace ${Math.round(minutes/60)} h`;
+  return`Actualizado hace ${Math.round(minutes/1440)} días`;
+}
+
+function fileDataUrl(file:File){
+  return new Promise<string>((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(String(reader.result??""));
+    reader.onerror=()=>reject(new Error("No se pudo leer el archivo."));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function responseJson<T>(response:Response):Promise<T>{
@@ -270,6 +306,18 @@ export default function Home() {
     name: "",
     items: [emptyBomItem()],
   });
+  const technicalSheetRef = useRef<HTMLInputElement>(null);
+  const [technicalSheet, setTechnicalSheet] = useState<{
+    fileName: string;
+    loading: boolean;
+    message: string;
+    analysis: TechnicalSheetAnalysis | null;
+  }>({
+    fileName: "",
+    loading: false,
+    message: "",
+    analysis: null,
+  });
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [requirementQuery, setRequirementQuery] = useState("");
   const [shortageQuery, setShortageQuery] = useState("");
@@ -299,8 +347,21 @@ export default function Home() {
       quantity: number;
       unit: string;
       depots:Record<string,number>;
+      updatedAt?:string;
     }>
   >([]);
+  const [stockSummary,setStockSummary]=useState<StockSummary>({
+    itemCount:0,
+    updatedAt:null,
+    ageMinutes:null,
+    latestRun:null,
+  });
+  const [stockSync,setStockSync]=useState<StockSyncState>({
+    configured:false,
+    syncMinutes:15,
+    loading:false,
+    message:"",
+  });
   const [stockQuery, setStockQuery] = useState("");
   const [stockDraft, setStockDraft] = useState({
     materialCode: "",
@@ -354,12 +415,15 @@ export default function Home() {
   const [userQuery, setUserQuery] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [chatLoading,setChatLoading]=useState(false);
+  const [chatMode,setChatMode]=useState<"unknown"|"ai"|"guided">("unknown");
+  const [assistantConfigured,setAssistantConfigured]=useState(false);
   const [chatMessages, setChatMessages] = useState<
     Array<{ from: "user" | "bot"; text: string }>
   >([
     {
       from: "bot",
-      text: "¡Hola! Soy tu asistente de insumos. Puedo ayudarte a revisar stock, próximos faltantes, compras y la programación. Podés escribirme un código, el nombre de un insumo o preguntarme algo como “¿qué debería comprar primero?”.",
+      text: "¡Hola! Soy el asistente general del ERP. Puedo explicarte qué cambió en la programación, el estado del sistema, cómo funciona cada módulo y qué necesita atención.",
     },
   ]);
   const weeks = useMemo(() => summarizeWeeks(records), [records]);
@@ -614,6 +678,7 @@ export default function Home() {
       if (!response.ok)
         throw new Error(payload.error || "No se pudo guardar la BOM.");
       setBomDraft({ code: "", name: "", items: [emptyBomItem()] });
+      setTechnicalSheet({fileName:"",loading:false,message:"",analysis:null});
       await loadBoms();
       setBomMessage("BOM guardada correctamente.");
     } catch (error) {
@@ -645,6 +710,62 @@ export default function Home() {
     setBomMessage(
       `${bomSuggestion.items.length} referencias encontradas en el Sheet. Revisá descripción y consumo antes de guardar.`,
     );
+  };
+  const analyzeTechnicalSheet = async (file?:File) => {
+    if(!file)return;
+    if(file.type!=="application/pdf"&&!file.name.toLocaleLowerCase("es").endsWith(".pdf")){
+      setTechnicalSheet({fileName:file.name,loading:false,message:"El archivo debe ser PDF.",analysis:null});
+      return;
+    }
+    if(file.size>15*1024*1024){
+      setTechnicalSheet({fileName:file.name,loading:false,message:"La ficha no puede superar 15 MB.",analysis:null});
+      return;
+    }
+    setTechnicalSheet({fileName:file.name,loading:true,message:"Analizando texto, tablas e imágenes del PDF…",analysis:null});
+    try{
+      const response=await fetch("/api/technical-sheets/analyze",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({fileName:file.name,fileData:await fileDataUrl(file)}),
+      });
+      const payload=await responseJson<{analysis?:TechnicalSheetAnalysis;error?:string}>(response);
+      if(!response.ok||!payload.analysis)throw new Error(payload.error||"No se pudo analizar la ficha técnica.");
+      setTechnicalSheet({
+        fileName:file.name,
+        loading:false,
+        message:`Se reconocieron ${payload.analysis.items.length} insumos. Revisalos antes de guardar.`,
+        analysis:payload.analysis,
+      });
+    }catch(error){
+      setTechnicalSheet({
+        fileName:file.name,
+        loading:false,
+        message:error instanceof Error?error.message:"No se pudo analizar la ficha técnica.",
+        analysis:null,
+      });
+    }finally{
+      if(technicalSheetRef.current)technicalSheetRef.current.value="";
+    }
+  };
+  const applyTechnicalSheet=()=>{
+    const analysis=technicalSheet.analysis;
+    if(!analysis)return;
+    setBomDraft(current=>({
+      code:analysis.productCode||current.code,
+      name:analysis.productName||current.name,
+      items:analysis.items.length
+        ?analysis.items.map(item=>({
+          materialCode:item.materialCode,
+          materialName:item.materialName,
+          category:item.category,
+          quantity:item.quantity,
+          unit:item.unit,
+          action:item.action,
+          substitutes:item.substitutes,
+        }))
+        :current.items,
+    }));
+    setBomMessage("Borrador aplicado desde el PDF. Confirmá códigos, consumos y operaciones antes de guardar.");
   };
   const loadRequirements = useCallback(async () => {
     setRequirementState((state) => ({ ...state, loading: true, error: "" }));
@@ -685,10 +806,53 @@ export default function Home() {
     }
   }, []);
   const loadStock = useCallback(async () => {
-    const r = await fetch("/api/stock", { cache: "no-store" });
-    const p = await responseJson<{ items?: typeof stock }>(r);
-    if (r.ok) setStock(p.items ?? []);
+    try{
+      const r = await fetch("/api/stock", { cache: "no-store" });
+      const p = await responseJson<{ items?: typeof stock;summary?:StockSummary;error?:string }>(r);
+      if(!r.ok)throw new Error(p.error||"No se pudo leer el stock.");
+      setStock(p.items ?? []);
+      if(p.summary)setStockSummary(p.summary);
+    }catch(error){
+      setStockSync(current=>({...current,message:error instanceof Error?error.message:"No se pudo leer el stock."}));
+    }
   }, []);
+  const loadStockSyncStatus=useCallback(async()=>{
+    try{
+      const response=await fetch("/api/stock/sync",{cache:"no-store"});
+      const payload=await responseJson<{configured?:boolean;syncMinutes?:number;status?:StockSummary;error?:string}>(response);
+      if(!response.ok)throw new Error(payload.error||"No se pudo revisar la conexión de stock.");
+      setStockSync(current=>({
+        ...current,
+        configured:Boolean(payload.configured),
+        syncMinutes:payload.syncMinutes??15,
+      }));
+      if(payload.status)setStockSummary(payload.status);
+    }catch{
+      // La carga por Excel no depende de esta integración opcional.
+    }
+  },[]);
+  const syncStockFromErp=useCallback(async(force:boolean)=>{
+    setStockSync(current=>({...current,loading:true,message:force?"Consultando el ERP…":"Verificando actualización automática…"}));
+    try{
+      const response=await fetch("/api/stock/sync",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({force}),
+      });
+      const payload=await responseJson<{skipped?:boolean;imported?:number;message?:string;error?:string}>(response);
+      if(!response.ok)throw new Error(payload.error||"No se pudo actualizar desde el ERP.");
+      await Promise.all([loadStock(),loadRequirements()]);
+      setStockSync(current=>({
+        ...current,
+        loading:false,
+        message:payload.skipped
+          ?payload.message||"El stock ya estaba actualizado."
+          :`Stock actualizado desde el ERP: ${payload.imported??0} insumos.`,
+      }));
+    }catch(error){
+      setStockSync(current=>({...current,loading:false,message:error instanceof Error?error.message:"No se pudo actualizar desde el ERP."}));
+    }
+  },[loadRequirements,loadStock]);
   const saveStock = async () => {
     const r = await fetch("/api/stock", {
       method: "POST",
@@ -763,9 +927,9 @@ export default function Home() {
       const r = await fetch("/api/stock/bulk", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ items: stockImport.items }),
+        body: JSON.stringify({ items: stockImport.items,sourceName:stockImport.fileName }),
       });
-      const p = (await r.json()) as { imported?: number; error?: string };
+      const p = await responseJson<{ imported?: number; error?: string }>(r);
       if (!r.ok) throw new Error(p.error || "No se pudo importar el stock.");
       await loadStock();
       await loadRequirements();
@@ -995,9 +1159,28 @@ export default function Home() {
       const payload = await responseJson<{
         source?: { live?: boolean; fetchedAt?: string; notice?: string };
         records?: ProgramRecord[];
+        recentChange?:{
+          added:number;
+          removed:number;
+          modified:number;
+          total:number;
+          detectedAt:string;
+          changedIds:string[];
+          changedWeekIds:string[];
+        }|null;
       }>(response);
       if (Array.isArray(payload.records)) {
-        if (recordsRef.current.length > 0 && payload.source?.live) {
+        if(payload.recentChange?.total){
+          setProgramChange({
+            added:payload.recentChange.added,
+            removed:payload.recentChange.removed,
+            modified:payload.recentChange.modified,
+            total:payload.recentChange.total,
+            detectedAt:payload.recentChange.detectedAt,
+            changedIds:payload.recentChange.changedIds??[],
+            changedWeekIds:payload.recentChange.changedWeekIds??[],
+          });
+        }else if (recordsRef.current.length > 0 && payload.source?.live) {
           const change = diffProgram(recordsRef.current, payload.records);
           if (change.total)
             setProgramChange({
@@ -1031,6 +1214,7 @@ export default function Home() {
   }, []);
 
   const loadSettings=useCallback(async()=>{try{const response=await fetch("/api/settings",{cache:"no-store"});const payload=await responseJson<{settings?:OperationalSettings}>(response);if(response.ok&&payload.settings){setSettings(payload.settings);setSettingsDraft(payload.settings);}}catch{}},[]);
+  const loadAssistantStatus=useCallback(async()=>{try{const response=await fetch("/api/assistant",{cache:"no-store"});const payload=await responseJson<{configured?:boolean}>(response);if(response.ok)setAssistantConfigured(Boolean(payload.configured));}catch{}},[]);
   const saveSettings=async()=>{setSettingsMessage("Guardando…");try{const response=await fetch("/api/settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(settingsDraft)});const payload=await responseJson<{settings?:OperationalSettings;error?:string}>(response);if(!response.ok||!payload.settings)throw new Error(payload.error||"No se pudo guardar.");setSettings(payload.settings);setSettingsDraft(payload.settings);setSettingsMessage("Configuración guardada en Cloudflare D1.");await refreshProgram(true);}catch(error){setSettingsMessage(error instanceof Error?error.message:"No se pudo guardar.");}};
 
   useEffect(() => {
@@ -1040,6 +1224,13 @@ export default function Home() {
       window.clearInterval(timer);
     };
   }, [session,refreshProgram,settings.syncIntervalSeconds]);
+  useEffect(()=>{
+    if(!session||!stockSync.configured)return;
+    const timer=window.setInterval(()=>{
+      if(document.visibilityState==="visible")void syncStockFromErp(false);
+    },Math.max(5,stockSync.syncMinutes)*60_000);
+    return()=>window.clearInterval(timer);
+  },[session,stockSync.configured,stockSync.syncMinutes,syncStockFromErp]);
   useEffect(() => {
     void fetch("/api/auth", { cache: "no-store" })
       .then(async (r) => {
@@ -1058,7 +1249,7 @@ export default function Home() {
       if (cancelled) return;
       await refreshProgram(false,true);
       if (cancelled) return;
-      await Promise.all([loadBoms(), loadStock()]);
+      await Promise.all([loadBoms(), loadStock(),loadStockSyncStatus(),loadAssistantStatus()]);
       if (cancelled) return;
       await loadRequirements();
     };
@@ -1066,68 +1257,42 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [session, loadBoms, loadStock, loadRequirements,loadSettings,refreshProgram]);
+  }, [session, loadBoms, loadStock, loadStockSyncStatus,loadAssistantStatus,loadRequirements,loadSettings,refreshProgram]);
 
   const canAccess = (target: string) =>
     session?.role === "admin" ||
     target === "resumen" ||
     (session?.permissions ?? "").split(",").includes(target);
-  const askAssistant = (question: string) => {
+  const askAssistant = async (question: string) => {
     const clean = question.trim();
-    if (!clean) return;
-    const term = clean.toLocaleLowerCase("es");
-    let answer =
-      "No encontré una coincidencia. Probá indicando un código de producto o insumo.";
-    const codes = [
-      ...new Set(
-        [
-          ...stock.map((item) => item.materialCode),
-          ...requirements.map((item) => item.materialCode),
-          ...records.map((item) => item.productCode),
-        ].filter(Boolean),
-      ),
-    ];
-    const code = codes.find((value) =>term.includes(value.toLocaleLowerCase("es")))??stock.find(item=>term.includes(item.materialName.toLocaleLowerCase("es")))?.materialCode;
-    if (/^(hola|buen dia|buenas|buenos dias|hello)\b/.test(term)) answer=`¡Hola ${session?.name?.split(" ")[0]??""}! ¿Revisamos stock, faltantes, compras o la programación de esta semana?`;
-    else if(term.includes("gracias"))answer="¡De nada! Si querés, también puedo buscar otro insumo o decirte cuáles son las compras más urgentes.";
-    else if (code) {
-      const stockItem = stock.find((item) => item.materialCode === code),
-        requirement = requirements.find((item) => item.materialCode === code),
-        productRows = records.filter((item) => item.productCode === code);
-      if (stockItem || requirement) {
-        const shortage = shortages.find((item) => item.materialCode === code);
-        answer = `Encontré ${stockItem?.materialName??code} (${code}). Tenés ${formatNumber(stockItem?.quantity ?? 0)} ${stockItem?.unit??"unidades"}${requirement ? ` y el programa necesita ${formatNumber(requirement.total)}` : ""}${shortage ? `. Faltan ${formatNumber(shortage.shortage)}, por lo que conviene incluirlo en Compras` : ". Por ahora el stock alcanza"}.${
-          requirement?.products.length
-            ? ` Lo consumen ${requirement.products
-                .map((product) => product.productCode)
-                .slice(0, 6)
-                .join(", ")}.`
-            : ""
-        }`;
-      } else if (productRows.length)
-        answer = `El producto ${code} aparece en ${productRows.length} operaciones: ${formatNumber(productRows.reduce((sum, row) => sum + row.bottles, 0))} botellas en ${[...new Set(productRows.map((row) => row.weekLabel))].join(", ")}. ¿Querés revisar alguno de sus insumos?`;
-    } else if (term.includes("compr") || term.includes("falt"))
-      answer = shortages.length
-        ? `Ahora mismo veo ${shortages.length} insumos con faltante. Empezaría por estos: ${[
-            ...shortages,
-          ]
-            .sort((a, b) => b.shortage - a.shortage)
-            .slice(0, 5)
-            .map(
-              (item) => `${item.materialCode} (${formatNumber(item.shortage)})`,
-            )
-            .join(", ")}. Si me indicás uno, te doy su necesidad, stock y productos asociados.`
-        : "Buenas noticias: con la información cargada no hay faltantes calculados en este momento.";
-    else if (term.includes("semana") || term.includes("produc"))
-      answer = `La programación tiene ${records.length} operaciones repartidas en ${weeks.length} semanas: ${weeks.map((week) => `${week.label} (${week.operations})`).join(", ")}. ¿Querés que busque un producto específico?`;
-    else if (term.includes("stock"))
-      answer = `El último reporte tiene ${stock.length} insumos cargados. Decime un código o parte del nombre —por ejemplo “tapón” o “cápsula”— y te digo cuánto hay y si alcanza.`;
+    if (!clean||chatLoading) return;
     setChatMessages((messages) => [
       ...messages,
       { from: "user", text: clean },
-      { from: "bot", text: answer },
     ]);
     setChatInput("");
+    setChatLoading(true);
+    try{
+      const response=await fetch("/api/assistant",{
+        method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({question:clean,currentView:view}),
+      });
+      const payload=await responseJson<{answer?:string;mode?:"ai"|"guided";notice?:string;error?:string}>(response);
+      if(!response.ok||!payload.answer)throw new Error(payload.error||"No se pudo consultar el asistente.");
+      setChatMode(payload.mode??"guided");
+      setChatMessages(messages=>[
+        ...messages,
+        {from:"bot",text:payload.answer!},
+      ]);
+    }catch(error){
+      setChatMessages(messages=>[
+        ...messages,
+        {from:"bot",text:error instanceof Error?error.message:"No se pudo consultar el asistente."},
+      ]);
+    }finally{
+      setChatLoading(false);
+    }
   };
   const navigate = (target: string) => {
     if (!canAccess(target)) return;
@@ -2139,6 +2304,54 @@ export default function Home() {
                     <p>El consumo se expresa por botella o unidad producida.</p>
                   </div>
                 </div>
+                <div className="technical-sheet-upload">
+                  <input
+                    ref={technicalSheetRef}
+                    hidden
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(event)=>void analyzeTechnicalSheet(event.target.files?.[0])}
+                  />
+                  <div className="technical-sheet-copy">
+                    <span className="pdf-badge">PDF</span>
+                    <div>
+                      <strong>Crear borrador desde una ficha técnica</strong>
+                      <p>La IA reconoce producto, insumos, cantidades y operación. Una persona siempre debe revisar antes de guardar.</p>
+                    </div>
+                  </div>
+                  <button
+                    className="export-button"
+                    disabled={technicalSheet.loading}
+                    onClick={()=>technicalSheetRef.current?.click()}
+                  >
+                    {technicalSheet.loading?"Analizando…":"Analizar ficha PDF"}
+                  </button>
+                </div>
+                {technicalSheet.fileName&&(
+                  <div className={`technical-sheet-result ${technicalSheet.analysis?"ready":"review"}`}>
+                    <div>
+                      <strong>{technicalSheet.fileName}</strong>
+                      <p>{technicalSheet.message}</p>
+                      {technicalSheet.analysis&&(
+                        <small>
+                          Confianza estimada: {Math.round(technicalSheet.analysis.confidence*100)}% · {technicalSheet.analysis.items.length} insumos
+                        </small>
+                      )}
+                    </div>
+                    {technicalSheet.analysis&&(
+                      <>
+                        {technicalSheet.analysis.warnings.length>0&&(
+                          <ul>
+                            {technicalSheet.analysis.warnings.slice(0,5).map(warning=><li key={warning}>{warning}</li>)}
+                          </ul>
+                        )}
+                        <button className="primary-button" onClick={applyTechnicalSheet}>
+                          Usar este borrador
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
                 <div className="bom-form">
                   <div className="bom-fields">
                     <label>
@@ -2470,6 +2683,23 @@ export default function Home() {
                 </p>
               </div>
             </div>
+            <div className="stock-status-grid">
+              <article data-status={stockSummary.updatedAt?"ok":"review"}>
+                <span>Última fotografía</span>
+                <strong>{stockAgeLabel(stockSummary.ageMinutes)}</strong>
+                <small>{stockSummary.updatedAt?new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"short"}).format(new Date(stockSummary.updatedAt)):"Todavía no hay stock guardado"}</small>
+              </article>
+              <article data-status={stockSync.configured?"ok":"review"}>
+                <span>Fuente automática</span>
+                <strong>{stockSync.configured?"ERP conectado":"Pendiente de configurar"}</strong>
+                <small>{stockSync.configured?`Control compartido cada ${stockSync.syncMinutes} minutos`:"La importación por Excel sigue activa"}</small>
+              </article>
+              <article>
+                <span>Último origen</span>
+                <strong>{stockSummary.latestRun?.source==="erp"?"ERP":stockSummary.latestRun?.source==="manual"?"Corrección manual":stockSummary.latestRun?.source==="excel"?"Reporte Excel":"Sin registro"}</strong>
+                <small>{stockSummary.latestRun?.sourceName||"No se informaron cargas"}</small>
+              </article>
+            </div>
             <article className="stock-upload">
               <div className="upload-icon">
                 <Icon name="sheet" />
@@ -2499,7 +2729,17 @@ export default function Home() {
               >
                 {stockImport.fileName ? "Elegir otro archivo" : "Subir Excel"}
               </button>
+              {stockSync.configured&&(
+                <button
+                  className="export-button erp-sync-button"
+                  disabled={stockSync.loading}
+                  onClick={()=>void syncStockFromErp(true)}
+                >
+                  {stockSync.loading?"Sincronizando…":"Actualizar desde ERP"}
+                </button>
+              )}
             </article>
+            {stockSync.message&&<p className="stock-sync-message">{stockSync.message}</p>}
             {stockImport.fileName && (
               <article className="import-preview">
                 <div>
@@ -3058,6 +3298,8 @@ export default function Home() {
               <div className="admin-config-grid">
                 <section><span>Capacidad de importación</span><strong>Hasta 20.000 insumos</strong><small>La carga se realiza por lotes y verifica el total guardado.</small></section>
                 <section><span>Base de datos</span><strong>Cloudflare D1</strong><small>Usuarios, BOM, stock y distribución por depósito.</small></section>
+                <section><span>Asistente general</span><strong>{assistantConfigured?"IA configurada":"Modo guiado"}</strong><small>{assistantConfigured?"Responde con el estado actual del ERP.":"La aplicación responde con diagnósticos locales hasta configurar OPENAI_API_KEY."}</small></section>
+                <section><span>Stock desde ERP</span><strong>{stockSync.configured?"Conectado":"Carga por Excel"}</strong><small>{stockSync.configured?`Actualización controlada cada ${stockSync.syncMinutes} minutos.`:"Configurar ERP_STOCK_URL para habilitar el botón automático."}</small></section>
               </div>
               <div className="admin-protected-note"><strong>Protección de credenciales</strong><p>El correo de servicio y la clave privada de Google permanecen como secretos de Cloudflare. Desde aquí se modifican solamente los parámetros operativos seguros.</p></div>
             </article>}
@@ -3110,24 +3352,27 @@ export default function Home() {
           <header>
             <div>
               <strong>Asistente de Insumos</strong>
-              <small>Respuestas con datos actuales del ERP</small>
+              <small>{chatMode==="ai"?"IA general · datos actuales del ERP":chatMode==="guided"?"Diagnóstico guiado · datos actuales":"Asistente general de la aplicación"}</small>
             </div>
             <button onClick={() => setChatOpen(false)}>×</button>
           </header>
           <div className="chat-quick">
-            <button onClick={() => askAssistant("¿Qué tengo que comprar?")}>
-              ¿Qué comprar?
+            <button disabled={chatLoading} onClick={() => void askAssistant("Dame un resumen general de hoy")}>
+              Resumen de hoy
             </button>
             <button
-              onClick={() => askAssistant("¿Qué se produce esta semana?")}
+              disabled={chatLoading}
+              onClick={() => void askAssistant("¿Qué cambió en la programación?")}
             >
-              Producción semanal
+              ¿Qué cambió?
             </button>
             <button
-              onClick={() => askAssistant("¿Cuántos códigos tienen stock?")}
+              disabled={chatLoading}
+              onClick={() => void askAssistant("¿Cuál es el estado general del sistema?")}
             >
-              Resumen de stock
+              Estado del sistema
             </button>
+            <button disabled={chatLoading} onClick={()=>void askAssistant("¿Cómo funciona la aplicación?")}>Cómo funciona</button>
           </div>
           <div className="chat-messages">
             {chatMessages.map((message, index) => (
@@ -3135,19 +3380,21 @@ export default function Home() {
                 {message.text}
               </div>
             ))}
+            {chatLoading&&<div className="chat-message bot chat-thinking">Revisando la aplicación…</div>}
           </div>
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              askAssistant(chatInput);
+              void askAssistant(chatInput);
             }}
           >
             <input
               value={chatInput}
               onChange={(event) => setChatInput(event.target.value)}
-              placeholder="Escribí una pregunta o un código"
+              placeholder="Preguntá por el estado o funcionamiento"
+              disabled={chatLoading}
             />
-            <button>Enviar</button>
+            <button disabled={chatLoading}>Enviar</button>
           </form>
         </aside>
       )}

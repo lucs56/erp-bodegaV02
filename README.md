@@ -1,5 +1,69 @@
 # ERP de Insumos para Bodega
 
+## Mejoras de la versión 35: IA, fichas PDF y stock actualizado
+
+- El asistente ahora responde consultas **generales de la aplicación**: estado
+  operativo, cambios de programación, funcionamiento de módulos, fecha actual,
+  alertas y próximos pasos.
+- Si `OPENAI_API_KEY` está configurada, utiliza la API de OpenAI desde el
+  servidor. La clave nunca se envía al navegador. Sin esa clave, permanece
+  activo un diagnóstico guiado local y el resto del ERP funciona normalmente.
+- Productos y BOM permite seleccionar una ficha técnica PDF. La IA crea un
+  borrador con producto, insumos, cantidades, operación y advertencias. El PDF
+  nunca modifica una BOM por sí solo: un usuario debe revisar y guardar.
+- Los cambios de Google Sheets se registran en Cloudflare D1. De esta forma el
+  aviso y el asistente pueden explicar el mismo cambio desde distintos
+  navegadores.
+- Stock muestra fecha, antigüedad y origen de la última fotografía.
+- Se agregó un conector opcional de solo lectura al ERP. Admite JSON, CSV o
+  XLSX, reutiliza exactamente la misma validación de la carga manual y evita que
+  varios navegadores descarguen la misma fotografía dentro del intervalo.
+- La carga Excel actual, las correcciones manuales, los depósitos, faltantes,
+  compras, usuarios y permisos se mantienen sin cambios.
+
+### Configuración opcional en Cloudflare
+
+En el Worker, agregue los siguientes secretos o variables:
+
+| Variable | Uso |
+| --- | --- |
+| `OPENAI_API_KEY` | Activa la IA general y la lectura de fichas PDF. |
+| `OPENAI_MODEL` | Modelo utilizado. Si se omite, usa `gpt-5.6`. |
+| `ERP_STOCK_URL` | URL de solo lectura que entrega la fotografía completa de stock. |
+| `ERP_STOCK_TOKEN` | Token Bearer opcional del ERP. |
+| `ERP_STOCK_SYNC_MINUTES` | Intervalo compartido de actualización; mínimo 5, predeterminado 15. |
+
+No escriba secretos en `vite.config.ts` ni en archivos que se suben a Git.
+Puede copiar `.env.example` como referencia para desarrollo local.
+
+### Formato aceptado por el conector de stock
+
+El endpoint puede devolver:
+
+- el mismo reporte Excel/CSV usado por la carga manual; o
+- JSON con un arreglo directo o dentro de `items`, `rows`, `stock` o `data`.
+
+El JSON normalizado admite:
+
+```json
+{
+  "items": [
+    {
+      "materialCode": "10248",
+      "materialName": "Botella",
+      "category": "Botellas",
+      "quantity": 230000,
+      "unit": "unidad",
+      "depots": { "13": 30000, "2": 100000, "C18": 100000 }
+    }
+  ]
+}
+```
+
+El endpoint debe representar una **fotografía completa**, porque la
+sincronización reemplaza de forma verificada la fotografía anterior igual que
+el Excel manual.
+
 ## Corrección de rendimiento v34
 
 - No descarga ni procesa Google Sheets mientras el usuario está en la pantalla de acceso.

@@ -380,7 +380,18 @@ export default function Home() {
     },
   ]);
   const weeks = useMemo(() => summarizeWeeks(records), [records]);
-  const selected = weeks.find((week) => week.id === selectedWeek) ?? weeks[0];
+  const selected = weeks.find((week) => week.id === selectedWeek) ?? weeks[0] ?? {
+    id: "",
+    label: "Esperando programación",
+    status: "Actualizando",
+    detail: "Se mostrará la primera semana disponible",
+    fractionBottles: 0,
+    operations: 0,
+    fraccionar: 0,
+    vestir: 0,
+    encajonar: 0,
+    issues: 0,
+  };
   const missingCodeRecords = useMemo(
     () => records.filter((record) => !record.completed && !record.productCode),
     [records],
@@ -1463,7 +1474,7 @@ export default function Home() {
                           <span
                             className={String(tone)}
                             style={{
-                              width: `${Math.max(4, (Number(value) / selected.operations) * 100)}%`,
+                              width: `${selected.operations ? Math.max(4, (Number(value) / selected.operations) * 100) : 0}%`,
                             }}
                           />
                         </span>

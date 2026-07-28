@@ -13,6 +13,34 @@ const context = {
   blockedOperations: 12,
   shortages: 20,
   stockItems: 1600,
+  shortageItems: [
+    {
+      materialCode: "20393",
+      materialName: "Tapón screw negro",
+      category: "Tapones",
+      unit: "unidad",
+      required: 150000,
+      available: 100000,
+      shortage: 50000,
+      weeks: ["27–31 Jul"],
+    },
+    {
+      materialCode: "10222A",
+      materialName: "Botella 750 cc",
+      category: "Botellas",
+      unit: "unidad",
+      required: 80000,
+      available: 60000,
+      shortage: 20000,
+      weeks: ["03–07 Ago"],
+    },
+  ],
+  calculation: {
+    running: false,
+    phase: "Necesidad comparada con stock",
+    lastCalculatedAt: "28/7/26, 10:01",
+    sourceMessage: "programación actualizada · fichas técnicas actualizadas · stock actualizado",
+  },
   changes: { added: 2, modified: 1, removed: 0, detectedAt: "" },
 };
 
@@ -24,4 +52,28 @@ test("explica los cambios sin buscar códigos puntuales", () => {
   const answer = generalAssistantFallback("¿Qué cambió?", context);
   assert.match(answer, /2 operaciones agregadas/);
   assert.match(answer, /1 modificadas/);
+});
+
+test("reconoce sincronización con y sin tilde", () => {
+  assert.match(
+    generalAssistantFallback("esta andando la sincronizacion?", context),
+    /sincronización está funcionando/i,
+  );
+  assert.match(
+    generalAssistantFallback("sincronización", context),
+    /cada 30 segundos/i,
+  );
+});
+
+test("resume los faltantes actuales", () => {
+  const answer = generalAssistantFallback("que faltantes tengo", context);
+  assert.match(answer, /20 insumos con faltante/i);
+  assert.match(answer, /Tapón screw negro/);
+});
+
+test("filtra faltantes por tipo de insumo", () => {
+  const answer = generalAssistantFallback("que tapon me va a faltar", context);
+  assert.match(answer, /tapones o cierres/i);
+  assert.match(answer, /20393/);
+  assert.doesNotMatch(answer, /10222A/);
 });

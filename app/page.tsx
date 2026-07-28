@@ -59,6 +59,12 @@ type ShortageRequirement = Requirement & {
   depots?:Record<string,number>;
   shortage: number;
 };
+type CalculationStatusState = {
+  running: boolean;
+  phase: string;
+  lastCalculatedAt: string;
+  sourceMessage: string;
+};
 const emptyBomItem = (): BomItem => ({
   materialCode: "",
   materialName: "",
@@ -123,6 +129,16 @@ function lineLabel(line: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-AR").format(value);
+}
+
+function formatCalculationTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "sin fecha disponible"
+    : new Intl.DateTimeFormat("es-AR", {
+        dateStyle: "short",
+        timeStyle: "medium",
+      }).format(date);
 }
 
 function depotLabel(depot:string){
@@ -241,6 +257,57 @@ function Icon({
   );
 }
 
+function CalculationStatus({
+  status,
+  mapped,
+  materials,
+  shortages,
+  stockItems,
+}: {
+  status: CalculationStatusState;
+  mapped: number;
+  materials: number;
+  shortages: number;
+  stockItems: number;
+}) {
+  const ready = Boolean(status.lastCalculatedAt);
+  return (
+    <div
+      className={`calculation-status ${status.running ? "running" : ready ? "ready" : "pending"}`}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="calculation-status-icon">
+        <Icon name={status.running ? "sync" : ready ? "check" : "clipboard"} />
+      </span>
+      <div className="calculation-status-copy">
+        <strong>
+          {status.running
+            ? status.phase
+            : ready
+              ? "Necesidad comparada con stock"
+              : "Cálculo inicial pendiente"}
+        </strong>
+        <p>
+          {status.running
+            ? "La aplicación está actualizando las fuentes y volverá a comparar la necesidad con el stock."
+            : ready
+              ? `Último cálculo: ${formatCalculationTime(status.lastCalculatedAt)}. ${status.sourceMessage}`
+              : "Se ejecutará al terminar de cargar la programación, las fichas técnicas y el stock."}
+        </p>
+      </div>
+      {ready && !status.running && (
+        <div className="calculation-status-summary">
+          <span><b>{mapped}</b> operaciones</span>
+          <span><b>{materials}</b> insumos</span>
+          <span><b>{shortages}</b> faltantes</span>
+          <span><b>{stockItems}</b> registros de stock</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [session, setSession] = useState<{
     username: string;
@@ -267,7 +334,8 @@ export default function Home() {
   });
   const [refreshing, setRefreshing] = useState(false);
   const refreshPromiseRef=useRef<Promise<{changed:boolean;live:boolean}>|null>(null);
-  const requirementsPromiseRef=useRef<Promise<void>|null>(null);
+  const requirementsPromiseRef=useRef<Promise<boolean>|null>(null);
+  const fullRecalculationPromiseRef=useRef<Promise<boolean>|null>(null);
   const [view, setView] = useState<View>("resumen");
   const [adminTab,setAdminTab]=useState<"usuarios"|"configuracion"|"diagnostico">("usuarios");
   const [selectedWeek, setSelectedWeek] = useState("");
@@ -303,6 +371,13 @@ export default function Home() {
     stockItems: 0,
     error: "",
   });
+  const [calculationStatus, setCalculationStatus] =
+    useState<CalculationStatusState>({
+      running: false,
+      phase: "Preparando cálculo inicial…",
+      lastCalculatedAt: "",
+      sourceMessage: "",
+    });
   const [programChange, setProgramChange] = useState({
     added: 0,
     removed: 0,
@@ -373,7 +448,7 @@ export default function Home() {
   >([
     {
       from: "bot",
-      text: "¡Hola! Soy el asistente general del ERP. Puedo explicarte la sincronización, los cambios del programa, el estado del sistema y para qué sirve cada módulo.",
+      text: "¡Hola! Soy el asistente general del ERP. Puedo decirte si la sincronización está activa, qué cambió, qué faltantes hay por tipo y cómo funciona cada módulo.",
     },
   ]);
   const weeks = useMemo(() => summarizeWeeks(records), [records]);
@@ -605,12 +680,14 @@ export default function Home() {
       bomProductsRef.current = products;
       setBomProducts(products);
       setBomMessage("");
+      return true;
     } catch (error) {
       setBomMessage(
         error instanceof Error
           ? error.message
           : "No se pudieron cargar las fichas técnicas.",
       );
+      return false;
     } finally {
       setBomLoading(false);
     }
@@ -664,7 +741,15 @@ export default function Home() {
     if(requirementsPromiseRef.current)return requirementsPromiseRef.current;
     const operation=(async()=>{
       setRequirementState((state) => ({ ...state, loading: true, error: "" }));
+      setCalculationStatus((current) => ({
+        ...current,
+        running: true,
+        phase: "Comparando necesidad con stock…",
+      }));
       try {
+        await new Promise<void>((resolve) =>
+          window.requestAnimationFrame(() => resolve()),
+        );
         const payload = calculateClientRequirements(
           recordsRef.current,
           bomProductsRef.current,
@@ -681,27 +766,49 @@ export default function Home() {
           stockItems: payload.stockItems,
           error: "",
         });
+        setCalculationStatus((current) => ({
+          ...current,
+          running: false,
+          phase: "Necesidad comparada con stock",
+          lastCalculatedAt: new Date().toISOString(),
+          sourceMessage:
+            current.sourceMessage ||
+            "Cálculo realizado con la programación, las fichas técnicas y el stock disponibles.",
+        }));
+        return true;
       } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "No se pudo calcular el consumo.";
         setRequirementState((state) => ({
           ...state,
           loading: false,
-          error:
-            error instanceof Error
-              ? error.message
-              : "No se pudo calcular el consumo.",
+          error: message,
         }));
+        setCalculationStatus((current) => ({
+          ...current,
+          running: false,
+          phase: "No se pudo completar el cálculo",
+          sourceMessage: message,
+        }));
+        return false;
       }
     })();
     requirementsPromiseRef.current=operation;
-    try{await operation;}finally{if(requirementsPromiseRef.current===operation)requirementsPromiseRef.current=null;}
+    try{return await operation;}finally{if(requirementsPromiseRef.current===operation)requirementsPromiseRef.current=null;}
   }, []);
   const loadStock = useCallback(async () => {
-    const r = await fetch("/api/stock", { cache: "no-store" });
-    const p = await responseJson<{ items?: ClientStockItem[] }>(r);
-    if (r.ok) {
+    try {
+      const r = await fetch("/api/stock", { cache: "no-store" });
+      const p = await responseJson<{ items?: ClientStockItem[] }>(r);
+      if (!r.ok) return false;
       const items = p.items ?? [];
       stockRef.current = items;
       setStock(items);
+      return true;
+    } catch {
+      return false;
     }
   }, []);
   const saveStock = async () => {
@@ -718,7 +825,8 @@ export default function Home() {
         quantity: 0,
         unit: "unidad",
       });
-      await loadStock();
+      const stockUpdated = await loadStock();
+      if (stockUpdated) await loadRequirements();
     }
   };
   const selectStockFile = async (file?: File) => {
@@ -1061,6 +1169,47 @@ export default function Home() {
     }
     return result;
   },[refreshProgram,loadRequirements]);
+  const updateAndRecalculate=useCallback(async()=>{
+    if(fullRecalculationPromiseRef.current)return fullRecalculationPromiseRef.current;
+    const operation=(async()=>{
+      setCalculationStatus((current)=>({
+        ...current,
+        running:true,
+        phase:"Actualizando programación desde Google Sheets…",
+      }));
+      if(refreshPromiseRef.current)await refreshPromiseRef.current;
+      const programResult=await refreshProgram(true);
+
+      setCalculationStatus((current)=>({
+        ...current,
+        running:true,
+        phase:"Actualizando fichas técnicas y stock…",
+      }));
+      const [bomsUpdated,stockUpdated]=await Promise.all([loadBoms(),loadStock()]);
+
+      setCalculationStatus((current)=>({
+        ...current,
+        running:true,
+        phase:"Comparando necesidad con stock…",
+      }));
+      if(requirementsPromiseRef.current)await requirementsPromiseRef.current;
+      const calculated=await loadRequirements();
+      const sourceMessage=[
+        programResult.live?"programación actualizada":"última programación válida",
+        bomsUpdated?"fichas técnicas actualizadas":"últimas fichas técnicas disponibles",
+        stockUpdated?"stock actualizado":"último stock disponible",
+      ].join(" · ");
+      setCalculationStatus((current)=>({
+        ...current,
+        running:false,
+        phase:calculated?"Necesidad comparada con stock":"No se pudo completar el cálculo",
+        sourceMessage,
+      }));
+      return calculated;
+    })();
+    fullRecalculationPromiseRef.current=operation;
+    try{return await operation;}finally{if(fullRecalculationPromiseRef.current===operation)fullRecalculationPromiseRef.current=null;}
+  },[loadBoms,loadRequirements,loadStock,refreshProgram]);
   const saveSettings=async()=>{setSettingsMessage("Guardando…");try{const response=await fetch("/api/settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(settingsDraft)});const payload=await responseJson<{settings?:OperationalSettings;error?:string}>(response);if(!response.ok||!payload.settings)throw new Error(payload.error||"No se pudo guardar.");setSettings(payload.settings);setSettingsDraft(payload.settings);setSettingsMessage("Configuración guardada en Cloudflare D1.");await synchronizeProgram(true,true);}catch(error){setSettingsMessage(error instanceof Error?error.message:"No se pudo guardar.");}};
 
   useEffect(() => {
@@ -1118,6 +1267,26 @@ export default function Home() {
       blockedOperations:requirementState.blocked,
       shortages:shortages.length,
       stockItems:stock.length,
+      shortageItems:[...shortages]
+        .sort((left,right)=>right.shortage-left.shortage)
+        .map(item=>({
+          materialCode:item.materialCode,
+          materialName:item.materialName,
+          category:item.category,
+          unit:item.unit,
+          required:item.total,
+          available:item.available,
+          shortage:item.shortage,
+          weeks:item.weeks.map(week=>week.weekLabel),
+        })),
+      calculation:{
+        running:calculationStatus.running,
+        phase:calculationStatus.phase,
+        lastCalculatedAt:calculationStatus.lastCalculatedAt
+          ? dateTime(calculationStatus.lastCalculatedAt)
+          : "",
+        sourceMessage:calculationStatus.sourceMessage,
+      },
       changes:{
         added:programChange.added,
         modified:programChange.modified,
@@ -2364,10 +2533,15 @@ export default function Home() {
                 </p>
               </div>
               <button
-                className="refresh-button"
-                onClick={() => void loadRequirements()}
+                className={`refresh-button ${calculationStatus.running ? "busy" : ""}`}
+                disabled={calculationStatus.running||refreshing}
+                aria-busy={calculationStatus.running}
+                onClick={() => void updateAndRecalculate()}
               >
-                {requirementState.loading ? "Calculando…" : "Recalcular"}
+                <Icon name="sync" />
+                {calculationStatus.running
+                  ? "Actualizando y calculando…"
+                  : "Actualizar y recalcular"}
               </button>
             </div>
             <div className="bom-kpis">
@@ -2384,6 +2558,13 @@ export default function Home() {
                 <span>insumos calculados</span>
               </article>
             </div>
+            <CalculationStatus
+              status={calculationStatus}
+              mapped={requirementState.mapped}
+              materials={requirements.length}
+              shortages={shortages.length}
+              stockItems={stock.length}
+            />
             {requirementState.completed>0&&<p className="bom-message">{requirementState.completed} operaciones tachadas en Google Sheets se muestran como realizadas y fueron excluidas del consumo.</p>}
             {requirementState.error && (
               <p className="bom-message consumption-error">
@@ -2673,10 +2854,15 @@ export default function Home() {
                 </p>
               </div>
               <button
-                className="refresh-button"
-                onClick={() => void loadRequirements()}
+                className={`refresh-button ${calculationStatus.running ? "busy" : ""}`}
+                disabled={calculationStatus.running||refreshing}
+                aria-busy={calculationStatus.running}
+                onClick={() => void updateAndRecalculate()}
               >
-                {requirementState.loading ? "Calculando…" : "Recalcular"}
+                <Icon name="sync" />
+                {calculationStatus.running
+                  ? "Actualizando y calculando…"
+                  : "Actualizar y recalcular"}
               </button>
             </div>
             <div className="bom-kpis">
@@ -2693,6 +2879,13 @@ export default function Home() {
                 <span>insumos a comprar</span>
               </article>
             </div>
+            <CalculationStatus
+              status={calculationStatus}
+              mapped={requirementState.mapped}
+              materials={requirements.length}
+              shortages={shortages.length}
+              stockItems={stock.length}
+            />
             {requirementState.completed>0&&<p className="bom-message">{requirementState.completed} operaciones ya realizadas fueron excluidas de faltantes y compras.</p>}
             {requirementState.error ? (
               <p className="bom-message consumption-error">
@@ -3130,6 +3323,18 @@ export default function Home() {
             <button onClick={() => setChatOpen(false)}>×</button>
           </header>
           <div className="chat-quick">
+            <button
+              disabled={chatLoading}
+              onClick={() => void askAssistant("¿Está funcionando la sincronización?")}
+            >
+              Sincronización
+            </button>
+            <button
+              disabled={chatLoading}
+              onClick={() => void askAssistant("¿Qué faltantes tengo?")}
+            >
+              Faltantes
+            </button>
             <button disabled={chatLoading} onClick={() => void askAssistant("Dame un resumen de hoy")}>
               Resumen de hoy
             </button>

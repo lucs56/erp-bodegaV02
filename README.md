@@ -1,5 +1,18 @@
 # ERP de Insumos para Bodega
 
+## Actualización completa y asistente operativo (v39)
+
+- El botón de Consumos, Faltantes y Compras ahora se llama **Actualizar y
+  recalcular**. Primero consulta nuevamente Google Sheets, fichas técnicas y
+  stock; después compara la necesidad contra las existencias.
+- Un panel visible informa la etapa en curso, la hora del último cálculo y el
+  resumen usado: operaciones, insumos, faltantes y registros de stock.
+- El asistente reconoce consultas naturales con o sin tildes, por ejemplo
+  `¿está andando la sincronización?`, `¿qué faltantes tengo?` y
+  `¿qué tapón me va a faltar?`.
+- Las respuestas de faltantes se construyen con el último cálculo real del ERP,
+  sin inventar códigos ni cantidades. La IA externa continúa siendo opcional.
+
 ## Mejora de estabilidad en Cloudflare (v38)
 
 Las pantallas **Consumos**, **Faltantes** y **Compras** calculan sus resultados

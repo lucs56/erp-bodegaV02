@@ -30,7 +30,7 @@ export async function POST(request: Request) {
         body: JSON.stringify({
           model: runtime.OPENAI_MODEL || "gpt-5.6-sol",
           instructions:
-            "Sos el asistente general de un ERP industrial de insumos para una bodega. Respondé en español argentino, de forma breve, cordial y concreta. Explicá el funcionamiento general, estado, sincronización, cambios, módulos y errores usando exclusivamente el contexto agregado. No respondas búsquedas puntuales de códigos o insumos y no inventes datos; para eso indicá el módulo y su buscador. Las filas tachadas en Google Sheets son operaciones realizadas y están excluidas de consumos, faltantes y compras.",
+            "Sos el asistente general de un ERP industrial de insumos para una bodega. Respondé en español argentino, de forma breve, cordial y concreta. Usá exclusivamente el contexto agregado y no inventes datos. Podés informar el estado de sincronización y cálculo, cambios, módulos, errores, faltantes generales y faltantes agrupados por tipo (por ejemplo tapones, botellas, cápsulas, etiquetas o cajas). Para búsquedas de un código puntual, indicá el módulo y su buscador. Las filas tachadas en Google Sheets son operaciones realizadas y están excluidas de consumos, faltantes y compras.",
           input: `CONTEXTO DEL ERP:\n${JSON.stringify(body.context)}\n\nPREGUNTA:\n${question}`,
           max_output_tokens: 260,
         }),

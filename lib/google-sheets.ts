@@ -31,8 +31,8 @@ export async function readLiveProgram(force=false): Promise<LiveProgram | null> 
   return pendingProgram;
 }
 
-async function readSharedCache(maxAgeSeconds:number){try{const db=await getD1Database();const row=(await db.prepare("SELECT value,fetched_at FROM program_cache WHERE key = ?").bind("live").first()) as {value:string;fetched_at:string}|null;if(row&&Date.now()-new Date(row.fetched_at).getTime()<maxAgeSeconds*1000)return JSON.parse(row.value) as LiveProgram;}catch{}return null;}
-export async function readLastStoredProgram(){try{const db=await getD1Database();const row=(await db.prepare("SELECT value FROM program_cache WHERE key = ?").bind("live").first()) as {value:string}|null;return row?.value?JSON.parse(row.value) as LiveProgram:null;}catch{return null;}}
+async function readSharedCache(maxAgeSeconds:number){try{const db=await getD1Database();const row=await db.prepare("SELECT value,fetched_at FROM program_cache WHERE key = ?").bind("live").first<{value:string;fetched_at:string}>();if(row&&Date.now()-new Date(row.fetched_at).getTime()<maxAgeSeconds*1000)return JSON.parse(row.value) as LiveProgram;}catch{}return null;}
+export async function readLastStoredProgram(){try{const db=await getD1Database();const row=await db.prepare("SELECT value FROM program_cache WHERE key = ?").bind("live").first<{value:string}>();return row?.value?JSON.parse(row.value) as LiveProgram:null;}catch{return null;}}
 async function writeSharedCache(value:LiveProgram){try{const db=await getD1Database();await db.prepare("INSERT INTO program_cache (key,value,fetched_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,fetched_at=excluded.fetched_at").bind("live",JSON.stringify(value),value.fetchedAt).run();}catch{}}
 
 async function fetchLiveProgram(configuredSpreadsheetId:string): Promise<LiveProgram | null> {

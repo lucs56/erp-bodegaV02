@@ -39,7 +39,7 @@ export async function POST(request:Request){
     // deben sobrevivir de una importación anterior y falsear los faltantes.
     await database.prepare("DELETE FROM stock_items WHERE updated_at <> ?1").bind(now).run();
     await database.prepare("DELETE FROM stock_depot_items WHERE updated_at <> ?1").bind(now).run();
-    const verification=(await database.prepare("SELECT COUNT(*) AS total FROM stock_items WHERE updated_at = ?1").bind(now).first()) as {total:number}|null;
+    const verification=await database.prepare("SELECT COUNT(*) AS total FROM stock_items WHERE updated_at = ?1").bind(now).first<{total:number}>();
     const saved=Number(verification?.total??0);
     if(saved!==values.length)throw new Error(`La base confirmó ${saved} de ${values.length} insumos; la importación no se consideró completa.`);
     return Response.json({ok:true,imported:values.length,saved,depotRecords:depotValues.length,updatedAt:now});

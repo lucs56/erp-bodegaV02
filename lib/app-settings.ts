@@ -19,7 +19,7 @@ export function validateSettings(value:Partial<OperationalSettings>):Operational
 export async function readSettings():Promise<OperationalSettings>{
   try{
     const database=await getD1Database();
-    const row=await database.prepare("SELECT value FROM app_settings WHERE key = ?").bind("operational").first<{value:string}>();
+    const row=(await database.prepare("SELECT value FROM app_settings WHERE key = ?").bind("operational").first()) as {value:string}|null;
     if(!row?.value)return DEFAULT_SETTINGS;
     const stored=validateSettings({...DEFAULT_SETTINGS,...JSON.parse(row.value)});
     // Migra el valor predeterminado anterior sin alterar configuraciones

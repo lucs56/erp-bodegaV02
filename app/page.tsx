@@ -16,6 +16,7 @@ import {
   calculateClientRequirements,
   type ClientStockItem,
 } from "../lib/client-requirements";
+import { fetchWithRetry, RequestTimeoutError } from "../lib/resilient-fetch";
 
 type View =
   | "resumen"
@@ -65,6 +66,7 @@ type CalculationStatusState = {
   lastCalculatedAt: string;
   sourceMessage: string;
 };
+type ProgramRefreshMode = "standard" | "automatic" | "stored";
 const emptyBomItem = (): BomItem => ({
   materialCode: "",
   materialName: "",
@@ -176,15 +178,6 @@ function depotLabel(depot:string){
 async function responseJson<T>(response:Response):Promise<T>{
   const text=await response.text();
   try{return JSON.parse(text) as T;}catch{throw new Error(response.status===503?"El servicio está ocupado. Se conservan los últimos datos válidos y se reintentará automáticamente.":`El servidor devolvió una respuesta inválida (${response.status}).`);}
-}
-
-async function fetchWithRetry(input:RequestInfo|URL,init?:RequestInit){
-  let response=await fetch(input,init);
-  if([429,503,504].includes(response.status)){
-    await new Promise(resolve=>window.setTimeout(resolve,800));
-    response=await fetch(input,init);
-  }
-  return response;
 }
 
 function firstShortageWeek(item: ShortageRequirement) {
@@ -1135,12 +1128,32 @@ export default function Home() {
     setPasswordDraft({current:"",next:"",confirm:""});setPasswordMessage("Contraseña actualizada correctamente.");
   };
 
-  const refreshProgram = useCallback(async (force=false) => {
+  const refreshProgram = useCallback(async (
+    force=false,
+    mode:ProgramRefreshMode="standard",
+  ) => {
     if(refreshPromiseRef.current)return refreshPromiseRef.current;
     const operation=(async()=>{
-      setRefreshing(true);
+      const showActivity=mode!=="stored";
+      if(showActivity)setRefreshing(true);
       try {
-        const response = await fetchWithRetry(force?"/api/program?fresh=1":"/api/program", { cache: "no-store" });
+        const endpoint=
+          mode==="automatic"
+            ? "/api/program?background=1"
+            : mode==="stored"
+              ? "/api/program?stored=1"
+              : force
+                ? "/api/program?fresh=1"
+                : "/api/program";
+        const response = await fetchWithRetry(
+          endpoint,
+          { cache: "no-store" },
+          mode==="automatic"
+            ? {timeoutMs:4_000,maxRetries:0}
+            : mode==="stored"
+              ? {timeoutMs:4_000,maxRetries:0}
+              : {timeoutMs:12_000,maxRetries:force?1:0},
+        );
         if (!response.ok) throw new Error("No se pudo actualizar");
         const payload = await responseJson<{
           source?: { live?: boolean; fetchedAt?: string; notice?: string };
@@ -1171,16 +1184,18 @@ export default function Home() {
               : "Se conserva la última lectura validada."),
         });
         return{changed,live:Boolean(payload.source?.live)};
-      } catch {
+      } catch (error) {
+        const timedOut = error instanceof RequestTimeoutError;
         setSourceState((current) => ({
           ...current,
-          live: false,
           notice:
-            "No se pudo actualizar; se conservan la programación y los cálculos de la última lectura válida.",
+            timedOut
+              ? "Google Sheets demoró demasiado. Se conservan los últimos datos válidos y se volverá a intentar automáticamente."
+              : "No se pudo actualizar; se conservan la programación y los cálculos de la última lectura válida.",
         }));
-        return{changed:false,live:false};
+        return{changed:false,live:liveRef.current};
       } finally {
-        setRefreshing(false);
+        if(showActivity)setRefreshing(false);
       }
     })();
     refreshPromiseRef.current=operation;
@@ -1188,8 +1203,12 @@ export default function Home() {
   }, []);
 
   const loadSettings=useCallback(async()=>{try{const response=await fetch("/api/settings",{cache:"no-store"});const payload=await responseJson<{settings?:OperationalSettings}>(response);if(response.ok&&payload.settings){setSettings(payload.settings);setSettingsDraft(payload.settings);}}catch{}},[]);
-  const synchronizeProgram=useCallback(async(force=false,recalculate=false)=>{
-    const result=await refreshProgram(force);
+  const synchronizeProgram=useCallback(async(
+    force=false,
+    recalculate=false,
+    mode:ProgramRefreshMode="standard",
+  )=>{
+    const result=await refreshProgram(force,mode);
     if(recalculate||result.changed){
       if(requirementsPromiseRef.current)await requirementsPromiseRef.current;
       await loadRequirements();
@@ -1241,11 +1260,25 @@ export default function Home() {
 
   useEffect(() => {
     if(!session)return;
-    const timer = window.setInterval(() => {if(document.visibilityState==="visible")void synchronizeProgram();}, settings.syncIntervalSeconds*1000);
-    const onVisible=()=>{if(document.visibilityState==="visible")void synchronizeProgram();};
+    const verificationTimers=new Set<number>();
+    const runAutomaticCycle=()=>{
+      if(document.visibilityState!=="visible")return;
+      void synchronizeProgram(false,false,"automatic").finally(()=>{
+        const verificationTimer=window.setTimeout(()=>{
+          verificationTimers.delete(verificationTimer);
+          if(document.visibilityState==="visible")
+            void synchronizeProgram(false,false,"stored");
+        },8_000);
+        verificationTimers.add(verificationTimer);
+      });
+    };
+    const timer = window.setInterval(runAutomaticCycle, settings.syncIntervalSeconds*1000);
+    const onVisible=()=>{if(document.visibilityState==="visible")runAutomaticCycle();};
     document.addEventListener("visibilitychange",onVisible);
     return () => {
       window.clearInterval(timer);
+      for(const verificationTimer of verificationTimers)
+        window.clearTimeout(verificationTimer);
       document.removeEventListener("visibilitychange",onVisible);
     };
   }, [session,synchronizeProgram,settings.syncIntervalSeconds]);
@@ -1260,16 +1293,20 @@ export default function Home() {
   useEffect(() => {
     if (!session) return;
     let active=true;
+    let verificationTimer:number|undefined;
     void (async()=>{
       await loadSettings();
       if(!active)return;
-      await synchronizeProgram();
+      await synchronizeProgram(false,false,"automatic");
       if(!active)return;
       await Promise.all([loadBoms(), loadStock()]);
       if(!active)return;
       await loadRequirements();
+      verificationTimer=window.setTimeout(()=>{
+        if(active)void synchronizeProgram(false,false,"stored");
+      },8_000);
     })();
-    return()=>{active=false;};
+    return()=>{active=false;if(verificationTimer)window.clearTimeout(verificationTimer);};
   }, [session, loadBoms, loadStock, loadRequirements,loadSettings,synchronizeProgram]);
 
   const canAccess = (target: string) =>
@@ -1587,9 +1624,10 @@ export default function Home() {
                 <p>Planificá insumos y anticipá faltantes de producción.</p>
               </div>
               <button
-                className="refresh-button"
+                className={`refresh-button ${refreshing ? "busy" : ""}`}
                 onClick={() => void synchronizeProgram(true)}
                 disabled={refreshing}
+                aria-busy={refreshing}
               >
                 <Icon name="sync" />{" "}
                 {refreshing ? "Actualizando…" : "Actualizar ahora"}
@@ -2186,9 +2224,12 @@ export default function Home() {
                 </p>
               </div>
               <button
-                className="refresh-button"
+                className={`refresh-button ${refreshing ? "busy" : ""}`}
                 onClick={() => void synchronizeProgram(true)}
+                disabled={refreshing}
+                aria-busy={refreshing}
               >
+                <Icon name="sync" />
                 {refreshing ? "Actualizando…" : "Actualizar"}
               </button>
             </div>

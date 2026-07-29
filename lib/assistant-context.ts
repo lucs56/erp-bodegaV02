@@ -119,13 +119,13 @@ export async function buildAssistantSnapshot(currentView?: string) {
       removed: change.removed,
       examples: [
         ...change.addedRecords.map(
-          (item) => `Agregado ${item.productCode || item.productName}`,
+          (item: { productCode?: string; productName?: string }) => `Agregado ${item.productCode || item.productName}`,
         ),
         ...change.modifiedRecords.map(
-          (item) => `Modificado ${item.productCode || item.productName}`,
+          (item: { productCode?: string; productName?: string }) => `Modificado ${item.productCode || item.productName}`,
         ),
         ...change.removedRecords.map(
-          (item) => `Eliminado ${item.productCode || item.productName}`,
+          (item: { productCode?: string; productName?: string }) => `Eliminado ${item.productCode || item.productName}`,
         ),
       ].slice(0, 10),
     })),

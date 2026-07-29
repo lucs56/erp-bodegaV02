@@ -4,31 +4,12 @@ import { parseProgramSheet, type ParsedWeek } from "./program-parser";
 import { readSettings } from "./app-settings";
 import { getD1Database } from "../db";
 import { struckRowsBySheet } from "./xlsx-strikethrough";
+import { fetchWithRetry } from "./resilient-fetch";
 
 const DEFAULT_SHEET_ID = "1XL44rx3sNKpxowAQzY1iSjy7s8lYOsPTMngD6xeBDPQ";
 const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets.readonly";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
-
-const FETCH_TIMEOUT_MS = 15000;
-
-async function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-  timeout = FETCH_TIMEOUT_MS,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    return await fetch(input, {
-      ...init,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
+const GOOGLE_REQUEST_TIMEOUT_MS = 10_000;
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 let cachedProgram:{value:LiveProgram;expiresAt:number}|null=null;
@@ -50,8 +31,8 @@ export async function readLiveProgram(force=false): Promise<LiveProgram | null> 
   return pendingProgram;
 }
 
-async function readSharedCache(maxAgeSeconds:number){try{const db=await getD1Database();const row=await db.prepare("SELECT value,fetched_at FROM program_cache WHERE key = ?").bind("live").first<{value:string;fetched_at:string}>();if(row&&Date.now()-new Date(row.fetched_at).getTime()<maxAgeSeconds*1000)return JSON.parse(row.value) as LiveProgram;}catch{}return null;}
-export async function readLastStoredProgram(){try{const db=await getD1Database();const row=await db.prepare("SELECT value FROM program_cache WHERE key = ?").bind("live").first<{value:string}>();return row?.value?JSON.parse(row.value) as LiveProgram:null;}catch{return null;}}
+async function readSharedCache(maxAgeSeconds:number){try{const db=await getD1Database();const row=(await db.prepare("SELECT value,fetched_at FROM program_cache WHERE key = ?").bind("live").first()) as {value:string;fetched_at:string}|null;if(row&&Date.now()-new Date(row.fetched_at).getTime()<maxAgeSeconds*1000)return JSON.parse(row.value) as LiveProgram;}catch{}return null;}
+export async function readLastStoredProgram(){try{const db=await getD1Database();const row=(await db.prepare("SELECT value FROM program_cache WHERE key = ?").bind("live").first()) as {value:string}|null;return row?.value?JSON.parse(row.value) as LiveProgram:null;}catch{return null;}}
 async function writeSharedCache(value:LiveProgram){try{const db=await getD1Database();await db.prepare("INSERT INTO program_cache (key,value,fetched_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,fetched_at=excluded.fetched_at").bind("live",JSON.stringify(value),value.fetchedAt).run();}catch{}}
 
 async function fetchLiveProgram(configuredSpreadsheetId:string): Promise<LiveProgram | null> {
@@ -171,7 +152,7 @@ async function fetchLiveProgram(configuredSpreadsheetId:string): Promise<LivePro
 async function readPublicWorkbook(spreadsheetId:string):Promise<LiveProgram>{
   const url=new URL(`https://docs.google.com/spreadsheets/d/${spreadsheetId}/export`);
   url.searchParams.set("format","xlsx");url.searchParams.set("_",Date.now().toString());
-  const response=await fetchWithTimeout(url,{cache:"no-store",headers:{"cache-control":"no-cache, no-store",pragma:"no-cache"}});
+  const response=await googleFetch(url,{cache:"no-store",headers:{"cache-control":"no-cache, no-store",pragma:"no-cache"}});
   if(!response.ok)throw new Error(response.status===401||response.status===403?"Google Sheets no permite leer la programación. Compartila como lector mediante enlace.":`Google Sheets respondió ${response.status}.`);
   const workbook=XLSX.read(await response.arrayBuffer(),{type:"array",cellDates:true,cellStyles:true,bookFiles:true});
   const struckRows=struckRowsBySheet(workbook);
@@ -200,7 +181,7 @@ async function accessToken(email: string, privateKey: string) {
   );
   const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned));
   const assertion = `${unsigned}.${base64Url(new Uint8Array(signature))}`;
-  const response = await fetchWithTimeout(TOKEN_URL, {
+  const response = await googleFetch(TOKEN_URL, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
@@ -213,7 +194,7 @@ async function accessToken(email: string, privateKey: string) {
 }
 
 async function googleJson<T>(url: URL, token: string): Promise<T> {
-  const response = await fetchWithTimeout(url, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
+  const response = await googleFetch(url, { headers: { authorization: `Bearer ${token}` }, cache: "no-store" });
   if (!response.ok) throw new Error(`No se pudo leer Google Sheets (${response.status}).`);
   return response.json() as Promise<T>;
 }
@@ -234,6 +215,13 @@ async function runtimeVariables() {
     // Node-based build validation does not expose the Cloudflare runtime module.
   }
   return values;
+}
+
+function googleFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetchWithRetry(input, init, {
+    timeoutMs: GOOGLE_REQUEST_TIMEOUT_MS,
+    maxRetries: 0,
+  });
 }
 
 function pemBytes(pem: string) {

@@ -1,5 +1,27 @@
 # ERP de Insumos para Bodega
 
+## Ciclo automático visible y no bloqueante (v42)
+
+- Cada 30 segundos se inicia una sincronización breve y el ícono gira solamente
+  mientras se envía esa actualización.
+- La lectura pesada de Google Sheets continúa en segundo plano en Cloudflare,
+  por lo que la pantalla vuelve enseguida al estado normal.
+- Ocho segundos después se consulta silenciosamente el resultado guardado; si
+  hubo cambios, se actualizan la programación y los cálculos.
+- Los ciclos no quedan encadenados ni bloquean el siguiente intento. El botón
+  manual conserva la actualización completa bajo demanda.
+
+## Sincronización sin bloqueos (v41)
+
+- Las consultas a Google Sheets y Cloudflare tienen un tiempo máximo.
+- Si una respuesta demora demasiado, el indicador `Actualizando…` se libera,
+  se conservan la programación y los cálculos de la última lectura válida y el
+  sistema vuelve a intentarlo en el siguiente ciclo automático.
+- Los errores temporales `429`, `503` y `504` tienen un único reintento
+  controlado; nunca se genera un bucle de solicitudes.
+- La lectura interna de Google también se cancela si queda pendiente, evitando
+  que una sincronización trabada bloquee las siguientes.
+
 ## Consultas de insumos por código (v40)
 
 - El asistente acepta un código escrito directamente, por ejemplo `20383`.

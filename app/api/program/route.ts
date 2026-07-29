@@ -4,8 +4,30 @@ import { readLastStoredProgram,readLiveProgram,type LiveProgram } from "../../..
 export const dynamic = "force-dynamic";
 
 export async function GET(request:Request) {
+  const mode = new URL(request.url).searchParams;
+  if (mode.get("stored") === "1") {
+    const stored = await readLastStoredProgram();
+    return stored
+      ? liveResponse(
+          stored,
+          true,
+          "Sincronización automática activa. Se muestra la última lectura completada.",
+        )
+      : snapshotResponse("La primera lectura de Google Sheets todavía está en curso.");
+  }
+  if (mode.get("background") === "1") {
+    const stored = await readLastStoredProgram();
+    await scheduleBackgroundRefresh();
+    return stored
+      ? liveResponse(
+          stored,
+          true,
+          "Sincronización automática en curso. Los cambios se incorporan al terminar la lectura.",
+        )
+      : snapshotResponse("La primera lectura de Google Sheets se inició en segundo plano.");
+  }
   try {
-    const live = await readLiveProgram(new URL(request.url).searchParams.get("fresh")==="1");
+    const live = await readLiveProgram(mode.get("fresh")==="1");
     if (live) {
       const records = live.weeks.flatMap((week) => week.records);
       return NextResponse.json(
@@ -22,6 +44,18 @@ export async function GET(request:Request) {
     const stored=await readLastStoredProgram();
     if(stored)return liveResponse(stored,false,"Google no respondió; se muestra la última lectura real guardada en D1.");
     return snapshotResponse("No se pudo leer Google Sheets y todavía no existe una lectura real guardada.");
+  }
+}
+
+async function scheduleBackgroundRefresh() {
+  const refresh = readLiveProgram().catch(() => null);
+  try {
+    const workers = await import("cloudflare:workers");
+    workers.waitUntil(refresh);
+  } catch {
+    // En la validación local no existe el contexto de Cloudflare. La promesa
+    // ya quedó iniciada; en producción waitUntil garantiza su finalización.
+    void refresh;
   }
 }
 

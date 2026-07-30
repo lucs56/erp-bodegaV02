@@ -229,3 +229,11 @@ The timeout defaults can be overridden for a controlled canary with `SITES_INSTA
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
 - [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+
+## Ajuste v31: sincronización estable
+
+- Se restauró el ciclo de sincronización probado cada 30 segundos.
+- La actualización automática usa el endpoint en segundo plano y luego verifica la lectura almacenada.
+- Se eliminó el watchdog de lecturas forzadas que podía superponer trabajo en el servidor.
+- Se conserva la optimización de `/api/stock` mediante una única consulta JOIN y agrupación lineal.
+- El módulo Compras continúa eliminado y las operaciones tachadas siguen excluyéndose de Faltantes.

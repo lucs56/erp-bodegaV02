@@ -142,15 +142,6 @@ function formatCalculationTime(value: string) {
       }).format(date);
 }
 
-function validTimestamp(value: string) {
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function syncStaleAfterMs(intervalSeconds: number) {
-  return Math.max(60_000, intervalSeconds * 1_000 + 15_000);
-}
-
 function materialCodeKey(value: string) {
   return value
     .normalize("NFD")
@@ -360,10 +351,6 @@ export default function Home() {
     notice:
       "La conexión productiva de solo lectura todavía no está configurada.",
   });
-  const sourceStateRef=useRef(sourceState);
-  const lastProgramAttemptRef=useRef(0);
-  const lastProgramSuccessRef=useRef(validTimestamp(PROGRAM_SOURCE.capturedAt));
-  const [syncClock,setSyncClock]=useState(()=>Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const refreshPromiseRef=useRef<Promise<{changed:boolean;live:boolean}>|null>(null);
   const requirementsPromiseRef=useRef<Promise<boolean>|null>(null);
@@ -1048,28 +1035,25 @@ export default function Home() {
   ) => {
     if(refreshPromiseRef.current)return refreshPromiseRef.current;
     const operation=(async()=>{
-      const showActivity=mode==="standard";
+      const showActivity=mode!=="stored";
       if(showActivity)setRefreshing(true);
       try {
         const endpoint=
           mode==="automatic"
-            ? force
-              ? "/api/program?fresh=1"
-              : "/api/program"
+            ? "/api/program?background=1"
             : mode==="stored"
               ? "/api/program?stored=1"
               : force
                 ? "/api/program?fresh=1"
                 : "/api/program";
-        lastProgramAttemptRef.current=Date.now();
         const response = await fetchWithRetry(
           endpoint,
           { cache: "no-store" },
           mode==="automatic"
-            ? {timeoutMs:35_000,maxRetries:0}
+            ? {timeoutMs:4_000,maxRetries:0}
             : mode==="stored"
-              ? {timeoutMs:5_000,maxRetries:0}
-              : {timeoutMs:35_000,maxRetries:force?1:0},
+              ? {timeoutMs:4_000,maxRetries:0}
+              : {timeoutMs:12_000,maxRetries:force?1:0},
         );
         if (!response.ok) throw new Error("No se pudo actualizar");
         const payload = await responseJson<{
@@ -1078,7 +1062,7 @@ export default function Home() {
         }>(response);
         let changed=false;
         if (Array.isArray(payload.records)) {
-          if (recordsRef.current.length>0 && payload.source?.live) {
+          if (liveRef.current && payload.source?.live) {
             const change = diffProgram(recordsRef.current, payload.records);
             changed=change.total>0;
             if (change.total)
@@ -1091,38 +1075,26 @@ export default function Home() {
           setRecords(payload.records);
         }
         liveRef.current = Boolean(payload.source?.live);
-        const nextSourceState={
+        setSourceState({
           live: Boolean(payload.source?.live),
           fetchedAt: payload.source?.fetchedAt ?? PROGRAM_SOURCE.capturedAt,
           notice:
             payload.source?.notice ??
             (payload.source?.live
-              ? "Google Sheets se actualiza automáticamente según el intervalo configurado."
-              : "Se conserva la última lectura validada y se volverá a intentar."),
-        };
-        sourceStateRef.current=nextSourceState;
-        setSourceState(nextSourceState);
-        const completedAt=validTimestamp(nextSourceState.fetchedAt);
-        if(nextSourceState.live&&completedAt){
-          lastProgramSuccessRef.current=completedAt;
-          setSyncClock(Date.now());
-        }
+              ? "Google Sheets se actualiza automáticamente cada 30 segundos."
+              : "Se conserva la última lectura validada."),
+        });
         return{changed,live:Boolean(payload.source?.live)};
       } catch (error) {
         const timedOut = error instanceof RequestTimeoutError;
-        liveRef.current=false;
-        const nextSourceState={
-          ...sourceStateRef.current,
-          live:false,
+        setSourceState((current) => ({
+          ...current,
           notice:
             timedOut
-              ? "Google Sheets demoró demasiado. Se conservan los últimos datos válidos y el sistema reintentará automáticamente."
-              : "No se pudo actualizar; se conservan la programación y los cálculos de la última lectura válida. Reintentando…",
-        };
-        sourceStateRef.current=nextSourceState;
-        setSourceState(nextSourceState);
-        setSyncClock(Date.now());
-        return{changed:false,live:false};
+              ? "Google Sheets demoró demasiado. Se conservan los últimos datos válidos y se volverá a intentar automáticamente."
+              : "No se pudo actualizar; se conservan la programación y los cálculos de la última lectura válida.",
+        }));
+        return{changed:false,live:liveRef.current};
       } finally {
         if(showActivity)setRefreshing(false);
       }
@@ -1189,52 +1161,26 @@ export default function Home() {
 
   useEffect(() => {
     if(!session)return;
-    let active=true;
-    let nextCycleTimer:number|undefined;
-    const intervalMs=Math.max(10_000,settings.syncIntervalSeconds*1_000);
-    const staleAfterMs=syncStaleAfterMs(settings.syncIntervalSeconds);
-
-    const scheduleNext=(delay=intervalMs)=>{
-      if(nextCycleTimer)window.clearTimeout(nextCycleTimer);
-      nextCycleTimer=window.setTimeout(()=>void runAutomaticCycle(),delay);
+    const verificationTimers=new Set<number>();
+    const runAutomaticCycle=()=>{
+      if(document.visibilityState!=="visible")return;
+      void synchronizeProgram(false,false,"automatic").finally(()=>{
+        const verificationTimer=window.setTimeout(()=>{
+          verificationTimers.delete(verificationTimer);
+          if(document.visibilityState==="visible")
+            void synchronizeProgram(false,false,"stored");
+        },8_000);
+        verificationTimers.add(verificationTimer);
+      });
     };
-    const runAutomaticCycle=async(forceFresh=false)=>{
-      if(!active)return;
-      if(refreshPromiseRef.current){scheduleNext(5_000);return;}
-      await synchronizeProgram(forceFresh,false,"automatic");
-      if(active)scheduleNext();
-    };
-    const readIsStale=()=>{
-      const lastSuccess=lastProgramSuccessRef.current||validTimestamp(sourceStateRef.current.fetchedAt);
-      return !lastSuccess||Date.now()-lastSuccess>=staleAfterMs;
-    };
-    const recoverIfStale=()=>{
-      if(!active)return;
-      setSyncClock(Date.now());
-      if(
-        readIsStale()&&
-        !refreshPromiseRef.current&&
-        Date.now()-lastProgramAttemptRef.current>=10_000
-      )void runAutomaticCycle(true);
-    };
-    const onVisible=()=>{
-      if(document.visibilityState==="visible"&&readIsStale())void runAutomaticCycle(true);
-    };
-    const onFocus=()=>{if(readIsStale())void runAutomaticCycle(true);};
-    const onOnline=()=>void runAutomaticCycle(true);
-
-    scheduleNext(1_000);
-    const watchdogTimer=window.setInterval(recoverIfStale,10_000);
+    const timer = window.setInterval(runAutomaticCycle, settings.syncIntervalSeconds*1000);
+    const onVisible=()=>{if(document.visibilityState==="visible")runAutomaticCycle();};
     document.addEventListener("visibilitychange",onVisible);
-    window.addEventListener("focus",onFocus);
-    window.addEventListener("online",onOnline);
     return () => {
-      active=false;
-      if(nextCycleTimer)window.clearTimeout(nextCycleTimer);
-      window.clearInterval(watchdogTimer);
+      window.clearInterval(timer);
+      for(const verificationTimer of verificationTimers)
+        window.clearTimeout(verificationTimer);
       document.removeEventListener("visibilitychange",onVisible);
-      window.removeEventListener("focus",onFocus);
-      window.removeEventListener("online",onOnline);
     };
   }, [session,synchronizeProgram,settings.syncIntervalSeconds]);
   useEffect(() => {
@@ -1248,25 +1194,26 @@ export default function Home() {
   useEffect(() => {
     if (!session) return;
     let active=true;
+    let verificationTimer:number|undefined;
     void (async()=>{
       await loadSettings();
       if(!active)return;
-      await synchronizeProgram(true,false,"automatic");
+      await synchronizeProgram(false,false,"automatic");
       if(!active)return;
       await Promise.all([loadBoms(), loadStock()]);
       if(!active)return;
       await loadRequirements();
+      verificationTimer=window.setTimeout(()=>{
+        if(active)void synchronizeProgram(false,false,"stored");
+      },8_000);
     })();
-    return()=>{active=false;};
+    return()=>{active=false;if(verificationTimer)window.clearTimeout(verificationTimer);};
   }, [session, loadBoms, loadStock, loadRequirements,loadSettings,synchronizeProgram]);
 
   const canAccess = (target: string) =>
     session?.role === "admin" ||
     target === "resumen" ||
     (session?.permissions ?? "").split(",").includes(target);
-  const programSyncStale=
-    syncClock-validTimestamp(sourceState.fetchedAt)>=
-    syncStaleAfterMs(settings.syncIntervalSeconds);
   const askAssistant = async (question: string) => {
     const clean = question.trim();
     if (!clean||chatLoading) return;
@@ -1532,13 +1479,9 @@ export default function Home() {
               </button>
             ))}
         </nav>
-        <div className={`sync-state ${programSyncStale ? "stale" : ""}`}>
-          <span className={`pulse ${sourceState.live&&!programSyncStale ? "live" : ""}`} />
-          {programSyncStale
-            ? "Sincronización atrasada · reintentando"
-            : sourceState.live
-              ? "Sincronizado en vivo"
-              : "Última lectura validada"}
+        <div className="sync-state">
+          <span className={`pulse ${sourceState.live ? "live" : ""}`} />
+          {sourceState.live ? "Sincronizado en vivo" : "Instantánea validada"}
         </div>
         <div className="profile-menu">
           <button
@@ -1907,16 +1850,14 @@ export default function Home() {
             <div className="program-layout">
               <article className="table-card">
                 <div
-                  className={`source-banner ${sourceState.live&&!programSyncStale ? "live" : "snapshot"}`}
+                  className={`source-banner ${sourceState.live ? "live" : "snapshot"}`}
                 >
                   <span className="pulse" />
                   <div>
                     <strong>
-                      {programSyncStale
-                        ? "Sincronización atrasada: reintentando"
-                        : sourceState.live
-                          ? "Conexión automática activa"
-                          : "Última lectura validada"}
+                      {sourceState.live
+                        ? "Conexión automática activa"
+                        : "Modo de validación"}
                     </strong>
                     <p>{sourceState.notice}</p>
                   </div>
@@ -3293,7 +3234,7 @@ export default function Home() {
             {adminTab==="diagnostico"&&<article className="table-card admin-system-card">
               <div className="table-toolbar"><div><h2>Estado de la integración</h2><p>Información de la sesión actual.</p></div><button className="export-button" disabled={refreshing} onClick={()=>void synchronizeProgram(true)}>{refreshing?"Probando…":"Probar conexión"}</button></div>
               <div className="admin-diagnostic-grid">
-                <section data-ok={sourceState.live&&!programSyncStale}><span>Conexión</span><strong>{programSyncStale?"Atrasada · reintentando":sourceState.live?"Sincronizado en vivo":"Última lectura validada"}</strong><small>{sourceState.notice}</small></section>
+                <section data-ok={sourceState.live}><span>Conexión</span><strong>{sourceState.live?"Sincronizado en vivo":"Instantánea validada"}</strong><small>{sourceState.notice}</small></section>
                 <section><span>Última lectura</span><strong>{new Intl.DateTimeFormat("es-AR",{dateStyle:"short",timeStyle:"medium"}).format(new Date(sourceState.fetchedAt))}</strong><small>Hora informada por la última respuesta válida.</small></section>
                 <section><span>Semanas detectadas</span><strong>{weeks.length}</strong><small>{weeks.map(week=>week.label).join(" · ")||"Sin semanas reconocidas"}</small></section>
                 <section><span>Operaciones recibidas</span><strong>{records.length}</strong><small>{records.filter(record=>record.action==="FRACCIONAR").length} fraccionar · {records.filter(record=>record.action==="VESTIR").length} vestir · {records.filter(record=>record.action==="ENCAJONAR").length} encajonar</small></section>

@@ -1039,21 +1039,19 @@ export default function Home() {
       if(showActivity)setRefreshing(true);
       try {
         const endpoint=
-          mode==="automatic"
-            ? "/api/program?background=1"
+          mode==="automatic" || force
+            ? "/api/program?fresh=1"
             : mode==="stored"
               ? "/api/program?stored=1"
-              : force
-                ? "/api/program?fresh=1"
-                : "/api/program";
+              : "/api/program";
         const response = await fetchWithRetry(
           endpoint,
           { cache: "no-store" },
           mode==="automatic"
-            ? {timeoutMs:4_000,maxRetries:0}
+            ? {timeoutMs:25_000,maxRetries:0}
             : mode==="stored"
               ? {timeoutMs:4_000,maxRetries:0}
-              : {timeoutMs:12_000,maxRetries:force?1:0},
+              : {timeoutMs:25_000,maxRetries:force?1:0},
         );
         if (!response.ok) throw new Error("No se pudo actualizar");
         const payload = await responseJson<{
@@ -1161,28 +1159,27 @@ export default function Home() {
 
   useEffect(() => {
     if(!session)return;
-    const verificationTimers=new Set<number>();
     const runAutomaticCycle=()=>{
-      if(document.visibilityState!=="visible")return;
-      void synchronizeProgram(false,false,"automatic").finally(()=>{
-        const verificationTimer=window.setTimeout(()=>{
-          verificationTimers.delete(verificationTimer);
-          if(document.visibilityState==="visible")
-            void synchronizeProgram(false,false,"stored");
-        },8_000);
-        verificationTimers.add(verificationTimer);
-      });
+      if(document.visibilityState!=="visible"||!navigator.onLine)return;
+      void synchronizeProgram(false,false,"automatic");
     };
-    const timer = window.setInterval(runAutomaticCycle, settings.syncIntervalSeconds*1000);
+    const timer=window.setInterval(
+      runAutomaticCycle,
+      settings.syncIntervalSeconds*1000,
+    );
     const onVisible=()=>{if(document.visibilityState==="visible")runAutomaticCycle();};
+    const onFocus=()=>runAutomaticCycle();
+    const onOnline=()=>runAutomaticCycle();
     document.addEventListener("visibilitychange",onVisible);
-    return () => {
+    window.addEventListener("focus",onFocus);
+    window.addEventListener("online",onOnline);
+    return()=>{
       window.clearInterval(timer);
-      for(const verificationTimer of verificationTimers)
-        window.clearTimeout(verificationTimer);
       document.removeEventListener("visibilitychange",onVisible);
+      window.removeEventListener("focus",onFocus);
+      window.removeEventListener("online",onOnline);
     };
-  }, [session,synchronizeProgram,settings.syncIntervalSeconds]);
+  },[session,synchronizeProgram,settings.syncIntervalSeconds]);
   useEffect(() => {
     void fetch("/api/auth", { cache: "no-store" })
       .then(async (r) => {
@@ -1194,7 +1191,6 @@ export default function Home() {
   useEffect(() => {
     if (!session) return;
     let active=true;
-    let verificationTimer:number|undefined;
     void (async()=>{
       await loadSettings();
       if(!active)return;
@@ -1203,11 +1199,8 @@ export default function Home() {
       await Promise.all([loadBoms(), loadStock()]);
       if(!active)return;
       await loadRequirements();
-      verificationTimer=window.setTimeout(()=>{
-        if(active)void synchronizeProgram(false,false,"stored");
-      },8_000);
     })();
-    return()=>{active=false;if(verificationTimer)window.clearTimeout(verificationTimer);};
+    return()=>{active=false;};
   }, [session, loadBoms, loadStock, loadRequirements,loadSettings,synchronizeProgram]);
 
   const canAccess = (target: string) =>

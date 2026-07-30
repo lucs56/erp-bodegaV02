@@ -1,5 +1,18 @@
 # ERP de Insumos para Bodega
 
+## Sincronización directa visible cada 30 segundos (v32)
+
+- Cada ciclo automático consulta directamente Google Sheets con `fresh=1`; ya no
+  depende de una tarea en segundo plano que podía no terminar en Cloudflare.
+- El ícono de **Actualizar ahora** gira también durante la sincronización
+  automática y deja de girar cuando llega la respuesta o vence el tiempo máximo.
+- La tarjeta **Última lectura** cambia solamente al recibir una lectura nueva y
+  válida de Google Sheets.
+- El ERP actualiza inmediatamente al volver a la pestaña, recuperar el foco o
+  restablecerse la conexión a Internet.
+- Una lectura automática puede esperar hasta 25 segundos. La protección existente
+  evita que se superpongan dos sincronizaciones.
+
 ## Sincronización automática con watchdog (v29)
 
 - Cada ciclo espera una lectura real y nueva de Google Sheets; ya no se limita a

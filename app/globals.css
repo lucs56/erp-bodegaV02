@@ -38,6 +38,7 @@ button { color: inherit; }
 .nav-lock { display: inline-flex; margin-left: 6px; opacity: .48; vertical-align: middle; }
 .nav-lock svg { width: 12px; height: 12px; }
 .sync-state { display: flex; align-items: center; justify-content: flex-end; gap: 8px; font-size: 13px; white-space: nowrap; }
+.sync-state.stale { color: #ffd28a; }
 .pulse { width: 10px; height: 10px; border-radius: 50%; background: #2ed3b7; box-shadow: 0 0 0 5px rgba(46, 211, 183, .12); }
 .pulse:not(.live) { background: var(--amber); box-shadow: 0 0 0 5px rgba(228, 147, 35, .12); }
 .status-dot.info { background: var(--cyan); box-shadow: 0 0 0 4px #eaf6f9; }

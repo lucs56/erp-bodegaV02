@@ -1,15 +1,21 @@
 # ERP de Insumos para Bodega
 
-## Ciclo automático visible y no bloqueante (v42)
+## Sincronización automática con watchdog (v29)
 
-- Cada 30 segundos se inicia una sincronización breve y el ícono gira solamente
-  mientras se envía esa actualización.
-- La lectura pesada de Google Sheets continúa en segundo plano en Cloudflare,
-  por lo que la pantalla vuelve enseguida al estado normal.
-- Ocho segundos después se consulta silenciosamente el resultado guardado; si
-  hubo cambios, se actualizan la programación y los cálculos.
-- Los ciclos no quedan encadenados ni bloquean el siguiente intento. El botón
-  manual conserva la actualización completa bajo demanda.
+- Cada ciclo espera una lectura real y nueva de Google Sheets; ya no se limita a
+  mostrar inmediatamente la copia anterior mientras la actualización queda en
+  segundo plano.
+- El próximo ciclo se agenda al finalizar el anterior, evitando solicitudes
+  superpuestas.
+- Un watchdog revisa el estado cada 10 segundos. Si la última lectura supera el
+  intervalo configurado más 15 segundos, con un mínimo de 60 segundos, fuerza
+  un nuevo intento.
+- Al regresar a la pestaña, recuperar el foco o restablecerse Internet, el ERP
+  actualiza inmediatamente cuando la lectura está atrasada.
+- Una lectura puede esperar hasta 35 segundos antes de cancelarse, porque Google
+  puede necesitar varias consultas consecutivas para devolver valores y tachados.
+- La interfaz deja de mostrar “Sincronizado en vivo” cuando la lectura está
+  vencida y cambia a “Sincronización atrasada · reintentando”.
 
 ## Sincronización sin bloqueos (v41)
 

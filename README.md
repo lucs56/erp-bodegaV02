@@ -36,7 +36,7 @@
 
 ## Actualización completa y asistente operativo (v39)
 
-- El botón de Consumos, Faltantes y Compras ahora se llama **Actualizar y
+- El botón de Consumos y Faltantes ahora se llama **Actualizar y
   recalcular**. Primero consulta nuevamente Google Sheets, fichas técnicas y
   stock; después compara la necesidad contra las existencias.
 - Un panel visible informa la etapa en curso, la hora del último cálculo y el
@@ -49,7 +49,7 @@
 
 ## Mejora de estabilidad en Cloudflare (v38)
 
-Las pantallas **Consumos**, **Faltantes** y **Compras** calculan sus resultados
+Las pantallas **Consumos** y **Faltantes** calculan sus resultados
 en el navegador usando la programación, las fichas técnicas y el stock que ya
 fueron sincronizados. Esto elimina consultas repetidas y pesadas a
 `/api/requirements`, evita errores 503 por límite de CPU y conserva la misma
@@ -60,7 +60,7 @@ lógica de operaciones realizadas, stock por depósito y faltantes.
 - Sincronización inmediata al iniciar sesión, actualización automática cada 30 segundos y botón manual.
 - Una sola lectura de Google Sheets compartida entre Programación y el motor de cálculo, con reintento controlado para evitar respuestas 503 y Error 1102.
 - El último programa y el último cálculo correcto permanecen visibles si Google o Cloudflare demoran.
-- Las filas tachadas en Google Sheets se muestran como `REALIZADO` y quedan excluidas de Consumos, Faltantes y Compras.
+- Las filas con texto tachado en cualquier celda entre A y Z se muestran como `REALIZADO` y quedan excluidas de Consumos y Faltantes.
 - El módulo visible `BOM` pasa a llamarse `Ficha técnica`; las rutas y tablas internas se conservan para no perder información.
 - Asistente general del ERP para explicar fecha, sincronización, cambios, estado y módulos. Funciona localmente y admite IA opcional mediante la API de OpenAI.
 
@@ -88,7 +88,7 @@ Nunca coloques la clave real en `.env.example` ni la subas a Git.
 
 - Programación conectada a Google Sheets sin caché, actualización automática cada 30 segundos con la pestaña visible y botón manual.
 - Importación de hasta 20.000 insumos en lotes D1, reemplazo de la fotografía anterior y verificación de la cantidad realmente guardada.
-- Recálculo de faltantes y compras después de confirmar la importación completa.
+- Recálculo de faltantes después de confirmar la importación completa.
 - Reporte general y reporte Excel individual por insumo, nombrado con la descripción del material.
 - Administración de usuarios: altas, bajas, perfiles, permisos, bloqueo, restablecimiento de contraseña y estado de credenciales.
 - Cambio de contraseña propio desde el menú de perfil. Las contraseñas son hashes irreversibles y nunca se muestran en texto plano.
@@ -99,7 +99,7 @@ Nunca coloques la clave real en `.env.example` ni la subas a Git.
 
 - Stock total con desglose por depósitos `2`, `C18`, `R18` y `2OB`.
 - Nueva tabla D1 `stock_depot_items`, creada automáticamente al iniciar la aplicación.
-- Depósitos visibles en Stock, Faltantes, Compras y reportes Excel individuales.
+- Depósitos visibles en Stock y Faltantes.
 - Lecturas de Google Sheets reutilizadas durante 15 segundos para evitar picos y errores 503.
 - Sincronizaciones simultáneas consolidadas en una única descarga; el botón manual fuerza una lectura nueva.
 - Respuestas de error de API controladas para evitar mensajes `Unexpected token '<'`.
@@ -107,17 +107,15 @@ Nunca coloques la clave real en `.env.example` ni la subas a Git.
 
 ## Mejoras de la versión 30
 
-- Exportación de Compras por tipo de insumo, con un botón independiente para Botellas, Tapones, Cápsulas, Cajas y cada categoría detectada.
 - Una sola fila por código de insumo dentro de cada archivo; los productos consumidores quedan consolidados en una celda.
-- Nombre automático del archivo según la categoría, por ejemplo `reporte-compras-Tapones-AAAA-MM-DD.xlsx`.
 
 ## Mejoras de la versión 31
 
 - Administración conserva intacta la gestión de usuarios y agrega pestañas informativas de Configuración y Diagnóstico.
 - Diagnóstico muestra conexión, última lectura, semanas, operaciones, stock y estado del motor de cálculo, con botón para probar la conexión.
-- El depósito `13` se identifica como Producción y se suma al stock disponible para calcular Faltantes y Compras.
+- El depósito `13` se identifica como Producción y se suma al stock disponible para calcular Faltantes.
 - Los depósitos permanecen desglosados en pantalla y en Excel: `13 (Producción)`, `C18 (Calidad)`, `2 (Depósito 2)`, `R18` y `2OB`.
-- Prueba de control: necesidad 300.000 menos 230.000 disponibles entre depósitos produce una compra de 70.000.
+- Prueba de control: necesidad 300.000 menos 230.000 disponibles entre depósitos produce un faltante de 70.000.
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and

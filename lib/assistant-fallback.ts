@@ -86,7 +86,7 @@ export function generalAssistantAnswer(
     term.includes("anda") ||
     term.includes("diagnost")
   )
-    return `Estado general: ${snapshot.program.operations} operaciones en ${snapshot.program.weeks.length} semanas; ${snapshot.stock.items} insumos con stock; ${snapshot.bom.products} fichas técnicas; ${snapshot.bom.mappedOperations} operaciones calculadas y ${snapshot.bom.blockedOperations} sin BOM completa. ${snapshot.purchases.itemCount} insumos requieren compra. ${
+    return `Estado general: ${snapshot.program.operations} operaciones en ${snapshot.program.weeks.length} semanas; ${snapshot.stock.items} insumos con stock; ${snapshot.bom.products} fichas técnicas; ${snapshot.bom.mappedOperations} operaciones calculadas y ${snapshot.bom.blockedOperations} sin BOM completa. ${snapshot.purchases.itemCount} insumos presentan faltante. ${
       snapshot.stock.updatedAt
         ? `El stock tiene ${ageText(snapshot.stock.ageMinutes)}.`
         : "Todavía no se cargó una fotografía de stock."
@@ -98,7 +98,7 @@ export function generalAssistantAnswer(
     term.includes("aplicacion") ||
     term.includes("programa")
   )
-    return "La aplicación lee la programación de Google Sheets, relaciona cada producto con su ficha técnica BOM, calcula el consumo por operación, descuenta el stock disponible por depósito y arma Faltantes y Compras. Programación muestra el origen; Productos y BOM valida materiales; Consumos explica la demanda; Stock conserva la fotografía disponible; Faltantes y Compras muestran lo que no alcanza; Administración controla usuarios, configuración y diagnóstico.";
+    return "La aplicación lee la programación de Google Sheets, relaciona cada producto con su ficha técnica BOM, calcula el consumo por operación, descuenta el stock disponible por depósito y arma el aviso de Faltantes. Programación muestra el origen; Productos y BOM valida materiales; Consumos explica la demanda; Stock conserva la fotografía disponible; Faltantes muestra lo que no alcanza; Administración controla usuarios, configuración y diagnóstico.";
 
   if (term.includes("stock") || term.includes("existencia"))
     return `Hay ${snapshot.stock.items} insumos cargados y se identifican los depósitos ${snapshot.stock.depots.join(", ") || "sin detalle"}. La última actualización fue ${dateText(snapshot.stock.updatedAt)} (${ageText(snapshot.stock.ageMinutes)}). ${
@@ -120,7 +120,7 @@ export function generalAssistantAnswer(
           `${item.category}: ${item.items} insumos (${formatNumber(item.units)} unidades)`,
       )
       .join("; ");
-    return `Se calculan ${snapshot.purchases.itemCount} insumos con faltante por ${formatNumber(snapshot.purchases.totalUnits)} unidades. Principales grupos: ${categories || "sin categoría"}. Revisá Compras para ver los productos consumidores y la distribución por depósito.`;
+    return `Se calculan ${snapshot.purchases.itemCount} insumos con faltante por ${formatNumber(snapshot.purchases.totalUnits)} unidades. Principales grupos: ${categories || "sin categoría"}. Revisá Faltantes para ver los productos consumidores y la distribución por depósito.`;
   }
 
   if (term.includes("semana") || term.includes("produccion"))
@@ -129,7 +129,7 @@ export function generalAssistantAnswer(
   if (term.includes("ficha") || term.includes("bom") || term.includes("pdf"))
     return `Hay ${snapshot.bom.products} fichas técnicas aprobadas con ${snapshot.bom.items} insumos. Podés cargar un PDF en Productos y BOM; el asistente extrae un borrador, pero nada se guarda hasta que una persona revise códigos, cantidades, operación y sustitutos y presione “Guardar ficha técnica”.`;
 
-  return `Resumen general de hoy: ${snapshot.program.operations} operaciones en ${snapshot.program.weeks.length} semanas, ${snapshot.stock.items} insumos con stock, ${snapshot.bom.products} fichas técnicas y ${snapshot.purchases.itemCount} faltantes de compra. Podés preguntarme “qué cambió”, “estado del sistema”, “cómo funciona la aplicación” o “resumen de hoy”.`;
+  return `Resumen general de hoy: ${snapshot.program.operations} operaciones en ${snapshot.program.weeks.length} semanas, ${snapshot.stock.items} insumos con stock, ${snapshot.bom.products} fichas técnicas y ${snapshot.purchases.itemCount} insumos con faltante. Podés preguntarme “qué cambió”, “estado del sistema”, “cómo funciona la aplicación” o “resumen de hoy”.`;
 }
 
 function normalize(value: string) {

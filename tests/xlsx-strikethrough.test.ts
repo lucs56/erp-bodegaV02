@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { struckRowsBySheet } from "../lib/xlsx-strikethrough.ts";
 
-test("detecta una fila tachada usando los estilos internos del XLSX", () => {
+test("detecta una fila tachada aunque el formato esté en una columna de insumos", () => {
   const workbook = {
     Styles: {
       Fonts: [{}, { strike: true }],
@@ -19,7 +19,7 @@ test("detecta una fila tachada usando los estilos internos del XLSX", () => {
       },
       "xl/worksheets/sheet1.xml": {
         content: new TextEncoder().encode(
-          '<worksheet><sheetData><row r="9"><c r="D9" s="1"><v>ALAMOS</v></c></row></sheetData></worksheet>',
+          '<worksheet><sheetData><row r="9"><c r="X9" s="1"><v>72460</v></c></row></sheetData></worksheet>',
         ),
       },
     },

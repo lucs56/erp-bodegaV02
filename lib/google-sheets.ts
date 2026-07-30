@@ -107,7 +107,7 @@ async function fetchLiveProgram(configuredSpreadsheetId:string): Promise<LivePro
             );
             if (
               cells
-                .slice(0, 16)
+                .slice(0, 26)
                 .some(
                   (cell) =>
                     cell.effectiveFormat?.textFormat?.strikethrough === true,

@@ -105,7 +105,7 @@ export function generalAssistantFallback(
       return `Sí, está trabajando: ${context.calculation.phase}`;
     if (context.calculation?.lastCalculatedAt)
       return `El último cálculo terminó ${context.calculation.lastCalculatedAt}. Comparó ${context.mappedOperations} operaciones con ficha técnica contra ${context.stockItems} registros de stock y detectó ${context.shortages} faltantes. ${context.calculation.sourceMessage}`;
-    return "El cálculo todavía no terminó por primera vez. En Consumos, Faltantes o Compras podés usar “Actualizar y recalcular” para actualizar las fuentes y comparar la necesidad contra el stock.";
+    return "El cálculo todavía no terminó por primera vez. En Consumos o Faltantes podés usar “Actualizar y recalcular” para actualizar las fuentes y comparar la necesidad contra el stock.";
   }
 
   if (/ERROR|FALLA|PROBLEMA|ESTADO|ANDA|FUNCIONA/.test(term))
@@ -117,15 +117,15 @@ export function generalAssistantFallback(
     return `El último stock válido contiene ${context.stockItems} insumos. En Stock podés ver el total y su distribución por depósito; Faltantes compara ese stock contra la necesidad del programa vigente.`;
 
   if (/FICHA|TECNICA|MATERIAL/.test(term))
-    return "Ficha técnica relaciona cada producto con sus botellas, cierres, cápsulas, cajas y etiquetas, indicando el consumo por botella o por caja. Es la base para calcular Consumos, Faltantes y Compras.";
+    return "Ficha técnica relaciona cada producto con sus botellas, cierres, cápsulas, cajas y etiquetas, indicando el consumo por botella o por caja. Es la base para calcular Consumos y Faltantes.";
 
   if (/MODULO|COMO FUNCIONA|PARA QUE SIRVE|AYUDA|QUE HACE/.test(term))
-    return "El flujo general es: Programación lee Google Sheets; Ficha técnica define los insumos de cada producto; Stock carga las existencias por depósito; Consumos calcula la demanda; Faltantes compara demanda contra stock; y Compras prepara lo pendiente.";
+    return "El flujo general es: Programación lee Google Sheets; Ficha técnica define los insumos de cada producto; Stock carga las existencias por depósito; Consumos calcula la demanda; Faltantes compara la demanda contra el stock y avisa qué insumos no alcanzan.";
 
   if (/PROGRAMA|PRODUCCION|OPERACION|SEMANA/.test(term))
-    return `La lectura actual contiene ${context.operations} operaciones en ${context.weeks} semanas. ${context.completedOperations} están marcadas como realizadas y se excluyen de consumos, faltantes y compras.`;
+    return `La lectura actual contiene ${context.operations} operaciones en ${context.weeks} semanas. ${context.completedOperations} están marcadas como realizadas y se excluyen de consumos y faltantes.`;
 
-  return "Puedo responder sobre sincronización, cambios del programa, estado del cálculo, fichas técnicas, stock, faltantes y compras. También podés escribirme directamente un código de insumo para consultar su necesidad, stock y faltante.";
+  return "Puedo responder sobre sincronización, cambios del programa, estado del cálculo, fichas técnicas, stock y faltantes. También podés escribirme directamente un código de insumo para consultar su necesidad, stock y faltante.";
 }
 
 function materialAnswer(context: GeneralAssistantContext) {
@@ -212,7 +212,7 @@ function shortageAnswer(term: string, context: GeneralAssistantContext) {
   if (allItems.length)
     return `Hay ${context.shortages} insumos con faltante. Los principales son: ${summarizeShortages(allItems)} Las operaciones tachadas como realizadas no están incluidas.`;
 
-  return `Hay ${context.shortages} insumos con necesidad de compra. Abrí Faltantes para revisar el origen y Compras para descargarlos agrupados. Las operaciones tachadas como realizadas no están incluidas.`;
+  return `Hay ${context.shortages} insumos con faltante. Abrí Faltantes para revisar el origen, la semana y el stock disponible. Las operaciones tachadas como realizadas no están incluidas.`;
 }
 
 function summarizeShortages(items: GeneralAssistantShortage[]) {

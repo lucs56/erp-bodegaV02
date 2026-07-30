@@ -50,7 +50,7 @@ export function struckRowsBySheet(workbook: unknown) {
       const styleId = Number(attribute(cellMatch[1], "s"));
       if (!reference || !struckStyleIds.has(styleId)) continue;
       const coordinate = reference.match(/^([A-Z]+)(\d+)$/i);
-      if (!coordinate || columnNumber(coordinate[1]) > 16) continue;
+      if (!coordinate || columnNumber(coordinate[1]) > 26) continue;
       struckRows.add(Number(coordinate[2]));
     }
     if (struckRows.size) result.set(title, struckRows);

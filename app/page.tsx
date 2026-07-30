@@ -26,7 +26,6 @@ type View =
   | "consumos"
   | "stock"
   | "faltantes"
-  | "compras"
   | "usuarios"
   | "pendiente";
 type BomItem = {
@@ -456,7 +455,7 @@ export default function Home() {
     role: "planner",
     active: true,
     permissions:
-      "resumen,programacion,productos,consumos,stock,faltantes,compras",
+      "resumen,programacion,productos,consumos,stock,faltantes",
   });
   const [userMessage, setUserMessage] = useState("");
   const [userQuery, setUserQuery] = useState("");
@@ -656,21 +655,6 @@ export default function Home() {
         )
       : shortages;
   }, [shortages, shortageQuery]);
-  const purchaseGroups = useMemo(() => {
-    const groups = new Map<string, typeof visibleShortages>();
-    for (const item of visibleShortages)
-      groups.set(item.category || "Otros", [
-        ...(groups.get(item.category || "Otros") ?? []),
-        item,
-      ]);
-    return [...groups.entries()]
-      .map(([category, items]) => ({
-        category,
-        items,
-        total: items.reduce((sum, item) => sum + item.shortage, 0),
-      }))
-      .sort((left, right) => left.category.localeCompare(right.category, "es"));
-  }, [visibleShortages]);
   const visibleUsers = useMemo(() => {
     const term = userQuery.trim().toLocaleLowerCase("es");
     return term
@@ -931,89 +915,6 @@ export default function Home() {
       }));
     }
   };
-  const exportPurchases = async () => {
-    if (!shortages.length) return;
-    const XLSX = await import("xlsx");
-    const workbook = XLSX.utils.book_new();
-    const makeRows = (items: ShortageRequirement[]) =>
-      [...items]
-        .sort(
-          (left, right) =>
-            left.category.localeCompare(right.category, "es") ||
-            left.materialCode.localeCompare(right.materialCode, "es"),
-        )
-        .map((item) => ({
-          "Tipo de insumo": item.category || "Otros",
-          Código: item.materialCode,
-          Descripción: item.materialName,
-          Unidad: item.unit,
-          Necesidad: item.total,
-          Disponible: item.available,
-          "Cantidad a comprar": item.shortage,
-          "Stock por depósito":Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · "),
-          "Semana del faltante": firstShortageWeek(item),
-          "Semanas con consumo": item.weeks
-            .map((week) => week.weekLabel)
-            .join(", "),
-          "Cantidad de productos": item.products.length,
-          "Productos que lo consumen": item.products
-            .map(
-              (product) =>
-                `${product.productCode} - ${product.productName} (${formatNumber(product.quantity)})`,
-            )
-            .join("; "),
-          Sustitutos: item.substitutes.join(", "),
-        }));
-    const addSheet = (name: string, items: ShortageRequirement[]) => {
-      const sheet = XLSX.utils.json_to_sheet(makeRows(items));
-      sheet["!cols"] = [
-        { wch: 20 },
-        { wch: 14 },
-        { wch: 34 },
-        { wch: 12 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 20 },
-        { wch: 22 },
-        { wch: 35 },
-        { wch: 22 },
-        { wch: 70 },
-        { wch: 28 },
-      ];
-      if (sheet["!ref"]) sheet["!autofilter"] = { ref: sheet["!ref"] };
-      XLSX.utils.book_append_sheet(workbook, sheet, name);
-    };
-
-    addSheet("Todos los insumos", shortages);
-    const usedNames = new Set(["Todos los insumos"]);
-    for (const group of purchaseGroups) {
-      const base = (group.category || "Otros")
-        .replace(/[\\/?*:[\]]/g, " ")
-        .trim()
-        .slice(0, 31) || "Otros";
-      let name = base;
-      let suffix = 2;
-      while (usedNames.has(name)) {
-        const ending = ` ${suffix++}`;
-        name = `${base.slice(0, 31 - ending.length)}${ending}`;
-      }
-      usedNames.add(name);
-      const categoryItems = shortages.filter(
-        (item) => (item.category || "Otros") === group.category,
-      );
-      addSheet(name, categoryItems);
-    }
-    const date = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(workbook, `reporte-compras-${date}.xlsx`);
-  };
-  const exportPurchaseCategory=async(category:string,items:ShortageRequirement[])=>{
-    const XLSX=await import("xlsx");
-    const rows=[...items].sort((a,b)=>a.materialName.localeCompare(b.materialName,"es")).map(item=>({"Código de insumo":item.materialCode,"Nombre del insumo":item.materialName,"Tipo":item.category,"Unidad":item.unit,"Necesidad total":item.total,"Stock disponible":item.available,"Stock por depósito":Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · "),"Cantidad a comprar":item.shortage,"Semana del faltante":firstShortageWeek(item),"Semanas con consumo":item.weeks.map(week=>week.weekLabel).join(", "),"Productos que lo consumen":item.products.map(product=>`${product.productCode} - ${product.productName} (${formatNumber(product.quantity)})`).join("; "),"Sustitutos":item.substitutes.join(", ")}));
-    const sheet=XLSX.utils.json_to_sheet(rows);sheet["!cols"]=[{wch:18},{wch:42},{wch:20},{wch:12},{wch:18},{wch:18},{wch:28},{wch:20},{wch:24},{wch:35},{wch:75},{wch:30}];if(sheet["!ref"])sheet["!autofilter"]={ref:sheet["!ref"]};
-    const workbook=XLSX.utils.book_new();XLSX.utils.book_append_sheet(workbook,sheet,category.replace(/[\/?*:[\]]/g," ").slice(0,31)||"Compras");
-    const safe=category.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-zA-Z0-9_-]+/g,"-").replace(/-+/g,"-").replace(/^-|-$/g,"").slice(0,80)||"insumos";
-    XLSX.writeFile(workbook,`reporte-compras-${safe}-${new Date().toISOString().slice(0,10)}.xlsx`);
-  };
   const emptyUserDraft = () => ({
     id: 0,
     email: "",
@@ -1023,7 +924,7 @@ export default function Home() {
     role: "planner",
     active: true,
     permissions:
-      "resumen,programacion,productos,consumos,stock,faltantes,compras",
+      "resumen,programacion,productos,consumos,stock,faltantes",
   });
   const loadUsers = useCallback(async () => {
     const r = await fetch("/api/users", { cache: "no-store" });
@@ -1454,13 +1355,12 @@ export default function Home() {
         "consumos",
         "stock",
         "faltantes",
-        "compras",
         "usuarios",
       ].includes(target)
     ) {
       setView(target as View);
       if (target === "bom") void loadBoms();
-      if (["consumos", "faltantes", "compras"].includes(target))
+      if (["consumos", "faltantes"].includes(target))
         void loadRequirements();
       if (target === "stock") void loadStock();
       if (target === "usuarios") void loadUsers();
@@ -1545,7 +1445,6 @@ export default function Home() {
             ["consumos", "Consumos"],
             ["stock", "Stock"],
             ["faltantes", "Faltantes"],
-            ["compras", "Compras"],
             ["usuarios", "Administración"],
           ]
             .filter(([id]) => canAccess(id))
@@ -1571,7 +1470,6 @@ export default function Home() {
                   "consumos",
                   "stock",
                   "faltantes",
-                  "compras",
                   "usuarios",
                 ].includes(id) && (
                   <span className="nav-lock">
@@ -1794,8 +1692,8 @@ export default function Home() {
                   <div>
                     <h2>
                       {requirementState.loading
-                        ? "Calculando compras…"
-                        : `${shortages.length} insumos requieren compra`}
+                        ? "Calculando faltantes…"
+                        : `${shortages.length} insumos con faltante`}
                     </h2>
                     <p>
                       {requirementState.loading
@@ -1845,21 +1743,21 @@ export default function Home() {
                   </strong>
                   <p>
                     {shortages.length
-                      ? `Hay ${shortages.length} materiales con faltante. Abrí Compras para verlos agrupados por tipo de insumo.`
+                      ? `Hay ${shortages.length} materiales con faltante. Abrí Faltantes para revisar el detalle por insumo y semana.`
                       : requirements.length
                         ? "El stock disponible cubre las necesidades calculadas del programa."
-                        : "Todavía faltan datos para calcular compras."}
+                        : "Todavía faltan datos para calcular faltantes."}
                   </p>
                 </div>
                 <button
                   className="primary-button"
                   onClick={() => {
-                    setView(shortages.length ? "compras" : "programacion");
+                    setView(shortages.length ? "faltantes" : "programacion");
                     if (shortages.length) void loadRequirements();
                   }}
                 >
                   {shortages.length
-                    ? "Ver reporte de compras"
+                    ? "Ver faltantes"
                     : "Validar programación"}
                 </button>
               </article>
@@ -2975,21 +2873,13 @@ export default function Home() {
           </section>
         )}
 
-        {(view === "faltantes" || view === "compras") && (
+        {view === "faltantes" && (
           <section>
             <div className="page-heading compact">
               <div>
-                <p className="eyebrow">
-                  {view === "faltantes" ? "Prioridad 7" : "Prioridad 8"}
-                </p>
-                <h1>
-                  {view === "faltantes" ? "Faltantes" : "Necesidades de compra"}
-                </h1>
-                <p>
-                  {view === "faltantes"
-                    ? "Demanda que supera el stock disponible."
-                    : "Cantidades a comprar agrupadas por tipo de insumo."}
-                </p>
+                <p className="eyebrow">Prioridad 7</p>
+                <h1>Faltantes</h1>
+                <p>Insumos cuya necesidad supera el stock disponible.</p>
               </div>
               <button
                 className={`refresh-button ${calculationStatus.running ? "busy" : ""}`}
@@ -3014,7 +2904,7 @@ export default function Home() {
               </article>
               <article data-warning={shortages.length > 0}>
                 <strong>{shortages.length}</strong>
-                <span>insumos a comprar</span>
+                <span>insumos con faltante</span>
               </article>
             </div>
             <CalculationStatus
@@ -3024,7 +2914,11 @@ export default function Home() {
               shortages={shortages.length}
               stockItems={stock.length}
             />
-            {requirementState.completed>0&&<p className="bom-message">{requirementState.completed} operaciones ya realizadas fueron excluidas de faltantes y compras.</p>}
+            {requirementState.completed>0&&(
+              <p className="bom-message">
+                {requirementState.completed} operaciones tachadas en Google Sheets se consideran realizadas y fueron excluidas del cálculo de faltantes.
+              </p>
+            )}
             {requirementState.error ? (
               <p className="bom-message consumption-error">
                 {requirementState.error}
@@ -3033,7 +2927,7 @@ export default function Home() {
               <article className="empty-consumption">
                 <h2>
                   {requirements.length
-                    ? "No hay compras necesarias"
+                    ? "No hay faltantes"
                     : "Todavía no hay consumos calculables"}
                 </h2>
                 <p>
@@ -3046,120 +2940,51 @@ export default function Home() {
               <article className="table-card">
                 <div className="table-toolbar">
                   <div>
-                    <h2>
-                      {view === "compras"
-                        ? "Materiales a comprar"
-                        : "Materiales faltantes"}
-                    </h2>
-                    <p>
-                      {visibleShortages.length} de {shortages.length} insumos
-                    </p>
+                    <h2>Materiales faltantes</h2>
+                    <p>{visibleShortages.length} de {shortages.length} insumos</p>
                   </div>
-                  <div className="purchase-toolbar-actions">
-                    <label className="search-box">
-                      <Icon name="search" />
-                      <input
-                        value={shortageQuery}
-                        onChange={(e) => setShortageQuery(e.target.value)}
-                        placeholder="Buscar insumo, producto o semana"
-                      />
-                    </label>
-                    {view === "compras" && (
-                      <button
-                        className="export-button"
-                        onClick={() => void exportPurchases()}
-                      >
-                        Exportar Excel
-                      </button>
-                    )}
-                  </div>
+                  <label className="search-box">
+                    <Icon name="search" />
+                    <input
+                      value={shortageQuery}
+                      onChange={(e) => setShortageQuery(e.target.value)}
+                      placeholder="Buscar insumo, producto o semana"
+                    />
+                  </label>
                 </div>
-                {view === "compras" ? (
-                  <div className="purchase-groups">
-                    {purchaseGroups.map((group) => (
-                      <section className="purchase-group" key={group.category}>
-                        <header>
-                          <div>
-                            <span>Tipo de insumo</span>
-                            <h3>{group.category}</h3>
-                          </div>
-                          <div>
-                            <strong>{group.items.length}</strong>
-                            <span>materiales</span>
-                          </div>
-                          <div>
-                            <strong>{formatNumber(group.total)}</strong>
-                            <span>unidades a comprar</span>
-                          </div>
-                          <button className="export-button" onClick={()=>void exportPurchaseCategory(group.category,group.items)}>Exportar {group.category}</button>
-                        </header>
-                        <div className="table-scroll">
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Código</th>
-                                <th>Descripción</th>
-                                <th>Necesidad</th>
-                                <th>Disponible</th>
-                                <th>Comprar</th>
-                                <th>Semana del faltante</th>
-                                <th>Productos</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {group.items.map((item) => (
-                                <tr key={item.materialCode}>
-                                  <td className="number-cell">
-                                    {item.materialCode}
-                                  </td>
-                                  <td>{item.materialName}</td>
-                                  <td>{formatNumber(item.total)}</td>
-                                  <td><strong>{formatNumber(item.available)}</strong>{Object.keys(item.depots??{}).length?<small className="cell-detail">{Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")}</small>:null}</td>
-                                  <td className="number-cell purchase-quantity">
-                                    {formatNumber(item.shortage)}
-                                  </td>
-                                  <td>{firstShortageWeek(item)}</td>
-                                  <td>{item.products.length}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </section>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="table-scroll">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Tipo</th>
-                          <th>Insumo</th>
-                          <th>Necesidad</th>
-                          <th>Disponible</th>
-                          <th>Faltante</th>
-                          <th>Semana</th>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Tipo</th>
+                        <th>Insumo</th>
+                        <th>Necesidad</th>
+                        <th>Disponible</th>
+                        <th>Faltante</th>
+                        <th>Semana</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleShortages.map((item) => (
+                        <tr key={item.materialCode}>
+                          <td>{item.category}</td>
+                          <td>{item.materialCode} · {item.materialName}</td>
+                          <td>{formatNumber(item.total)}</td>
+                          <td>
+                            <strong>{formatNumber(item.available)}</strong>
+                            {Object.keys(item.depots??{}).length ? (
+                              <small className="cell-detail">
+                                {Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")}
+                              </small>
+                            ) : null}
+                          </td>
+                          <td className="number-cell">{formatNumber(item.shortage)}</td>
+                          <td>{firstShortageWeek(item)}</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {visibleShortages.map((item) => (
-                          <tr key={item.materialCode}>
-                            <td>{item.category}</td>
-                            <td>
-                              {item.materialCode} · {item.materialName}
-                            </td>
-                            <td>{formatNumber(item.total)}</td>
-                            <td><strong>{formatNumber(item.available)}</strong>{Object.keys(item.depots??{}).length?<small className="cell-detail">{Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")}</small>:null}</td>
-                            <td className="number-cell">
-                              {formatNumber(item.shortage)}
-                            </td>
-                            <td>{firstShortageWeek(item)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </article>
             )}
           </section>
@@ -3265,7 +3090,6 @@ export default function Home() {
                       ["consumos", "Consumos"],
                       ["stock", "Stock"],
                       ["faltantes", "Faltantes"],
-                      ["compras", "Compras"],
                     ].map(([id, label]) => (
                       <label key={id}>
                         <input
@@ -3431,7 +3255,7 @@ export default function Home() {
             <h1>Este módulo se habilitará después</h1>
             <p>
               Primero debemos validar completamente la lectura del programa.
-              Esto evita que las fichas técnicas, el stock y las compras se construyan sobre datos
+              Esto evita que las fichas técnicas, el stock y los faltantes se construyan sobre datos
               interpretados de forma incorrecta.
             </p>
             <button

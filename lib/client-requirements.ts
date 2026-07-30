@@ -31,7 +31,7 @@ function stockKey(value: string) {
 }
 
 /**
- * Calcula consumos, faltantes y compras con los datos que la interfaz ya
+ * Calcula consumos y faltantes con los datos que la interfaz ya
  * descargó. Evita volver a consultar D1 y Google Sheets para cada pantalla,
  * que era la operación que podía superar el límite de CPU de Cloudflare.
  */

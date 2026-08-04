@@ -270,3 +270,7 @@ La pantalla **Faltantes** permite:
 - descargar un reporte HTML con el mismo formato visual o imprimirlo/guardarlo como PDF.
 
 Los códigos alternativos deben estar cargados como sustitutos en la ficha técnica o aparecer juntos en el código compuesto (por ejemplo `30354-30354A`). En fichas provisionales, los códigos distintos del mismo tipo de insumo para un producto se convierten automáticamente en sustitutos.
+
+## Exportación Excel detallada de faltantes (v35)
+
+La descarga de Faltantes abre directamente la hoja **Reporte completo**, con una fila por insumo y semana. Incluye código o grupo, descripción, códigos compatibles, productos programados, necesidad semanal y total, cobertura, faltante semanal y total, stock combinado, stock por código, stock por depósito y cantidad trasladada a línea. Las hojas Resumen, Faltantes, Detalle semanal, Stock por código y las hojas por tipo de insumo se conservan como apoyo.

@@ -327,8 +327,8 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
   const XLSX=await import("xlsx");
   const workbook=XLSX.utils.book_new();
   workbook.Props={
-    Title:"Reporte de faltantes de insumos",
-    Subject:"Faltantes operativos por tipo, semana, depósito y códigos compatibles",
+    Title:"Reporte detallado de faltantes de insumos",
+    Subject:"Necesidad, stock, traslados, faltantes, semanas, depósitos y códigos compatibles",
     Author:"ERP de Insumos para Bodega",
     CreatedDate:new Date(),
   };
@@ -351,6 +351,88 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
       const leftIndex=order.indexOf(left),rightIndex=order.indexOf(right);
       return (leftIndex<0?999:leftIndex)-(rightIndex<0?999:rightIndex)||left.localeCompare(right);
     });
+
+  // Primera hoja: el reporte operativo completo que replica la información visible en la web.
+  const depotNames=[...new Set(items.flatMap((item)=>Object.keys(item.depots)))].sort((left,right)=>depotLabel(left).localeCompare(depotLabel(right),"es"));
+  const completeHeaders=[
+    "Tipo de insumo","Código / grupo","Descripción","Códigos compatibles","Unidad","Semana",
+    "Necesidad semana","Cubierto semana","Faltante semana","Saldo después de la semana",
+    "Necesidad total","Stock total del grupo","Trasladado a línea","Disponible total","Faltante total","Primer faltante",
+    "Productos programados","Stock detallado por código","Stock detallado por depósito",
+    ...depotNames.map((depot)=>`Stock · ${depotLabel(depot)}`),
+  ];
+  const completeRows:Array<Array<string|number>>=[
+    ["ERP DE INSUMOS · REPORTE DETALLADO DE FALTANTES"],
+    [`Programación leída: ${sourceDate||"Sin fecha disponible"} · Reporte generado: ${generated}`],
+    [],
+    completeHeaders,
+  ];
+  for(const [label,values] of groups){
+    for(const item of values){
+      const products=item.products
+        .map((product)=>`${product.productCode} · ${product.productName}: ${formatNumber(product.quantity)}`)
+        .join(" | ")||"Sin productos asociados";
+      const stockByCode=item.stockBreakdown
+        .map((stockItem)=>`${stockItem.materialCode} · ${stockItem.materialName}: ${formatNumber(stockItem.quantity)}`)
+        .join(" | ")||"Sin stock";
+      const stockByDepot=Object.entries(item.depots)
+        .map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`)
+        .join(" | ")||"Sin stock";
+      const weeks=item.weeklyShortages.length>0?item.weeklyShortages:[{
+        weekId:"sin-semana",weekLabel:"Sin semana",quantity:item.total,covered:Math.min(item.total,item.effectiveAvailable),shortage:item.shortage,remainingAvailable:Math.max(0,item.effectiveAvailable-item.total),
+      }];
+      for(const week of weeks){
+        completeRows.push([
+          label,item.materialCode,item.materialName,item.stockCodes.join(" + "),item.unit,week.weekLabel,
+          week.quantity,week.covered,week.shortage,week.remainingAvailable,
+          item.total,item.available,item.transferred,item.effectiveAvailable,item.shortage,firstShortageWeek(item),
+          products,stockByCode,stockByDepot,
+          ...depotNames.map((depot)=>item.depots[depot]??0),
+        ]);
+      }
+    }
+  }
+  const complete=XLSX.utils.aoa_to_sheet(completeRows);
+  const completeLayout=complete as import("xlsx").WorkSheet&ExcelSheetLayout;
+  completeLayout["!merges"]=[
+    {s:{r:0,c:0},e:{r:0,c:completeHeaders.length-1}},
+    {s:{r:1,c:0},e:{r:1,c:completeHeaders.length-1}},
+  ];
+  completeLayout["!rows"]=[{hpt:28},{hpt:22},{hpt:8},{hpt:36}];
+  const completeWidths=[24,20,46,30,13,28,18,18,18,22,18,20,18,18,18,26,58,62,48,...depotNames.map(()=>20)];
+  const completeNumericColumns=[6,7,8,9,10,11,12,13,14,...depotNames.map((_,index)=>19+index)];
+  formatExcelSheet(XLSX,complete,4,completeWidths,completeNumericColumns);
+  applyExcelCellStyle(complete as Record<string,unknown>,"A1",{font:{bold:true,color:{rgb:"FFFFFF"},sz:16},fill:{patternType:"solid",fgColor:{rgb:"127C82"}},alignment:{horizontal:"left",vertical:"center"}});
+  applyExcelCellStyle(complete as Record<string,unknown>,"A2",{font:{bold:true,color:{rgb:"FFFFFF"},sz:10},fill:{patternType:"solid",fgColor:{rgb:"173F55"}},alignment:{horizontal:"left",vertical:"center"}});
+  const detailBorder={
+    top:{style:"thin" as const,color:{rgb:"D9E4E8"}},bottom:{style:"thin" as const,color:{rgb:"D9E4E8"}},
+    left:{style:"thin" as const,color:{rgb:"D9E4E8"}},right:{style:"thin" as const,color:{rgb:"D9E4E8"}},
+  };
+  const completeRange=XLSX.utils.decode_range(complete["!ref"]??"A1:A1");
+  for(let row=4;row<=completeRange.e.r;row+=1){
+    const alternatingFill=row%2===0?"F7FAFB":"FFFFFF";
+    for(let column=0;column<=completeRange.e.c;column+=1){
+      const isNumber=completeNumericColumns.includes(column);
+      applyExcelCellStyle(complete as Record<string,unknown>,XLSX.utils.encode_cell({r:row,c:column}),{
+        fill:{patternType:"solid",fgColor:{rgb:alternatingFill}},
+        alignment:{horizontal:isNumber?"right":"left",vertical:"top",wrapText:true},
+        border:detailBorder,
+      },isNumber?"#,##0":undefined);
+    }
+    for(const column of [8,14]){
+      applyExcelCellStyle(complete as Record<string,unknown>,XLSX.utils.encode_cell({r:row,c:column}),{
+        font:{bold:true,color:{rgb:"A12E26"}},fill:{patternType:"solid",fgColor:{rgb:"FDEBEA"}},
+        alignment:{horizontal:"right",vertical:"top",wrapText:true},border:detailBorder,
+      },"#,##0");
+    }
+    for(const column of [11,12,13]){
+      applyExcelCellStyle(complete as Record<string,unknown>,XLSX.utils.encode_cell({r:row,c:column}),{
+        font:{bold:true,color:{rgb:"165C46"}},fill:{patternType:"solid",fgColor:{rgb:"EAF7F1"}},
+        alignment:{horizontal:"right",vertical:"top",wrapText:true},border:detailBorder,
+      },"#,##0");
+    }
+  }
+  XLSX.utils.book_append_sheet(workbook,complete,"Reporte completo");
 
   const summaryRows:Array<Array<string|number>>=[
     ["ERP DE INSUMOS · REPORTE OPERATIVO"],
@@ -395,54 +477,55 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
   XLSX.utils.book_append_sheet(workbook,summary,"Resumen");
 
   const consolidatedRows:Array<Array<string|number>>=[
-    ["Tipo de insumo","Código principal","Descripción","Códigos compatibles","Unidad","Necesidad total","Stock depósitos","Trasladado a línea","Disponible total","Faltante total","Primer faltante","Stock por depósito"],
+    ["Tipo de insumo","Código principal","Descripción","Códigos compatibles","Unidad","Necesidad total","Stock depósitos","Trasladado a línea","Disponible total","Faltante total","Primer faltante","Stock por depósito","Productos programados"],
     ...groups.flatMap(([label,values])=>values.map((item)=>[
       label,item.materialCode,item.materialName,item.stockCodes.join(" + "),item.unit,item.total,item.available,item.transferred,item.effectiveAvailable,item.shortage,firstShortageWeek(item),
       Object.entries(item.depots).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")||"Sin stock",
+      item.products.map((product)=>`${product.productCode} · ${product.productName}: ${formatNumber(product.quantity)}`).join(" | ")||"Sin productos asociados",
     ])),
   ];
   const consolidated=XLSX.utils.aoa_to_sheet(consolidatedRows);
-  formatExcelSheet(XLSX,consolidated,1,[24,18,44,28,13,17,17,18,17,17,25,50],[5,6,7,8,9]);
+  formatExcelSheet(XLSX,consolidated,1,[24,18,44,28,13,17,17,18,17,17,25,50,58],[5,6,7,8,9]);
   XLSX.utils.book_append_sheet(workbook,consolidated,"Faltantes");
 
-  const weeklyRows:Array<Array<string|number>>=[["Tipo de insumo","Código principal","Descripción","Semana","Se ocupa","Cubierto","Faltante","Saldo disponible"]];
+  const weeklyRows:Array<Array<string|number>>=[["Tipo de insumo","Código principal","Descripción","Códigos compatibles","Semana","Se ocupa","Cubierto","Faltante","Saldo disponible","Necesidad total","Stock total","Trasladado a línea"]];
   for(const [label,values] of groups){
     for(const item of values){
       for(const week of item.weeklyShortages){
-        weeklyRows.push([label,item.materialCode,item.materialName,week.weekLabel,week.quantity,week.covered,week.shortage,week.remainingAvailable]);
+        weeklyRows.push([label,item.materialCode,item.materialName,item.stockCodes.join(" + "),week.weekLabel,week.quantity,week.covered,week.shortage,week.remainingAvailable,item.total,item.available,item.transferred]);
       }
     }
   }
   const weekly=XLSX.utils.aoa_to_sheet(weeklyRows);
-  formatExcelSheet(XLSX,weekly,1,[24,18,44,26,16,16,16,18],[4,5,6,7]);
+  formatExcelSheet(XLSX,weekly,1,[24,18,44,28,26,16,16,16,18,18,18,18],[5,6,7,8,9,10,11]);
   XLSX.utils.book_append_sheet(workbook,weekly,"Detalle semanal");
 
-  const stockRows:Array<Array<string|number>>=[["Grupo / código principal","Tipo de insumo","Código compatible","Descripción","Depósito","Stock"]];
+  const stockRows:Array<Array<string|number>>=[["Grupo / código principal","Tipo de insumo","Código compatible","Descripción","Depósito","Stock","Stock total del grupo","Códigos compatibles"]];
   for(const [label,values] of groups){
     for(const item of values){
       for(const stockItem of item.stockBreakdown){
         const depotEntries=Object.entries(stockItem.depots);
         if(depotEntries.length===0){
-          stockRows.push([item.materialCode,label,stockItem.materialCode,stockItem.materialName,"Sin stock",0]);
+          stockRows.push([item.materialCode,label,stockItem.materialCode,stockItem.materialName,"Sin stock",0,item.available,item.stockCodes.join(" + ")]);
           continue;
         }
         for(const [depot,quantity] of depotEntries){
-          stockRows.push([item.materialCode,label,stockItem.materialCode,stockItem.materialName,depotLabel(depot),quantity]);
+          stockRows.push([item.materialCode,label,stockItem.materialCode,stockItem.materialName,depotLabel(depot),quantity,item.available,item.stockCodes.join(" + ")]);
         }
       }
     }
   }
   const stockDetail=XLSX.utils.aoa_to_sheet(stockRows);
-  formatExcelSheet(XLSX,stockDetail,1,[24,24,20,44,24,18],[5]);
+  formatExcelSheet(XLSX,stockDetail,1,[24,24,20,44,24,18,20,30],[5,6]);
   XLSX.utils.book_append_sheet(workbook,stockDetail,"Stock por código");
 
   const usedSheetNames=new Set(workbook.SheetNames.map((name)=>name.toLocaleLowerCase("es")));
   for(const [label,values] of groups){
-    const depotNames=[...new Set(values.flatMap((item)=>Object.keys(item.depots)))].sort();
+    const categoryDepotNames=[...new Set(values.flatMap((item)=>Object.keys(item.depots)))].sort();
     const weekNames=[...new Map(values.flatMap((item)=>item.weeklyShortages.map((week)=>[week.weekId,week.weekLabel] as const))).entries()];
     const headers=[
-      "Código principal","Descripción","Códigos compatibles","Unidad","Necesidad total","Stock depósitos","Trasladado a línea","Disponible total","Faltante total","Primer faltante",
-      ...depotNames.map((depot)=>`Stock ${depotLabel(depot)}`),
+      "Código principal","Descripción","Códigos compatibles","Unidad","Necesidad total","Stock depósitos","Trasladado a línea","Disponible total","Faltante total","Primer faltante","Productos programados","Stock detallado por código",
+      ...categoryDepotNames.map((depot)=>`Stock ${depotLabel(depot)}`),
       ...weekNames.flatMap(([,weekLabel])=>[`Se ocupa · ${weekLabel}`,`Cubierto · ${weekLabel}`,`Faltante · ${weekLabel}`,`Saldo · ${weekLabel}`]),
     ];
     const rows:Array<Array<string|number>>=[headers];
@@ -450,7 +533,9 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
       const weeksById=new Map(item.weeklyShortages.map((week)=>[week.weekId,week]));
       rows.push([
         item.materialCode,item.materialName,item.stockCodes.join(" + "),item.unit,item.total,item.available,item.transferred,item.effectiveAvailable,item.shortage,firstShortageWeek(item),
-        ...depotNames.map((depot)=>item.depots[depot]??0),
+        item.products.map((product)=>`${product.productCode} · ${product.productName}: ${formatNumber(product.quantity)}`).join(" | ")||"Sin productos asociados",
+        item.stockBreakdown.map((stockItem)=>`${stockItem.materialCode}: ${formatNumber(stockItem.quantity)}`).join(" | ")||"Sin stock",
+        ...categoryDepotNames.map((depot)=>item.depots[depot]??0),
         ...weekNames.flatMap(([weekId])=>{
           const week=weeksById.get(weekId);
           return week?[week.quantity,week.covered,week.shortage,week.remainingAvailable]:[0,0,0,0];
@@ -458,13 +543,17 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
       ]);
     }
     const categorySheet=XLSX.utils.aoa_to_sheet(rows);
-    const widths=[18,44,28,13,17,17,18,17,17,25,...depotNames.map(()=>19),...weekNames.flatMap(()=>[19,19,19,19])];
-    const numericColumns=Array.from({length:headers.length-4},(_,index)=>index+4).filter((column)=>column!==9);
+    const widths=[18,44,28,13,17,17,18,17,17,25,58,42,...categoryDepotNames.map(()=>19),...weekNames.flatMap(()=>[19,19,19,19])];
+    const numericColumns=[4,5,6,7,8,...categoryDepotNames.map((_,index)=>12+index),...weekNames.flatMap((_,index)=>{
+      const start=12+categoryDepotNames.length+(index*4);
+      return [start,start+1,start+2,start+3];
+    })];
     formatExcelSheet(XLSX,categorySheet,1,widths,numericColumns);
     XLSX.utils.book_append_sheet(workbook,categorySheet,uniqueExcelSheetName(label,usedSheetNames));
   }
 
-  XLSX.writeFile(workbook,`reporte-faltantes-${new Date().toISOString().slice(0,10)}.xlsx`,{
+  (workbook as typeof workbook&{Workbook?:{Views?:Array<{activeTab:number}>}}).Workbook={Views:[{activeTab:0}]};
+  XLSX.writeFile(workbook,`reporte-faltantes-detallado-${new Date().toISOString().slice(0,10)}.xlsx`,{
     compression:true,
     cellStyles:true,
   });

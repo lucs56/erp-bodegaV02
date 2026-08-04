@@ -1,5 +1,13 @@
 # ERP de Insumos para Bodega
 
+## Exportación Excel de faltantes (v34)
+
+- El botón **Descargar Excel** genera un archivo `.xlsx` con el mismo análisis operativo de la pantalla.
+- Incluye una hoja **Resumen**, un consolidado de **Faltantes**, el **Detalle semanal** y el **Stock por código**.
+- Agrega una hoja independiente por tipo de insumo: cápsulas/tapas, botellas, tapones/corchos, cajas, etiquetas, embalaje auxiliar y otros.
+- Conserva la necesidad total, el stock por depósito, el material trasladado a línea, el faltante, los códigos compatibles y la cobertura de cada semana.
+- Los códigos compartidos se exportan como un único grupo y también quedan desglosados por código y depósito.
+
 ## Sincronización directa visible cada 30 segundos (v32)
 
 - Cada ciclo automático consulta directamente Google Sheets con `fresh=1`; ya no

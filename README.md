@@ -250,3 +250,15 @@ The timeout defaults can be overridden for a controlled canary with `SITES_INSTA
 - Se eliminó el watchdog de lecturas forzadas que podía superponer trabajo en el servidor.
 - Se conserva la optimización de `/api/stock` mediante una única consulta JOIN y agrupación lineal.
 - El módulo Compras continúa eliminado y las operaciones tachadas siguen excluyéndose de Faltantes.
+
+## Faltantes operativos por semana
+
+La pantalla **Faltantes** permite:
+
+- informar cantidades ya trasladadas a línea; se guardan en D1 y reducen el faltante;
+- agrupar los insumos por familia (botellas, cápsulas/tapas, tapones/corchos, cajas, etiquetas y otros);
+- distribuir la disponibilidad cronológicamente para mostrar la necesidad y el faltante de cada semana;
+- sumar el stock de códigos compatibles o sustitutos, mostrando debajo el detalle de cada código y depósito;
+- descargar un reporte HTML con el mismo formato visual o imprimirlo/guardarlo como PDF.
+
+Los códigos alternativos deben estar cargados como sustitutos en la ficha técnica o aparecer juntos en el código compuesto (por ejemplo `30354-30354A`). En fichas provisionales, los códigos distintos del mismo tipo de insumo para un producto se convierten automáticamente en sustitutos.

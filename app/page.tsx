@@ -55,9 +55,33 @@ type Requirement = {
   }>;
 };
 type ShortageRequirement = Requirement & {
+  groupKey: string;
+  stockCodes: string[];
   available: number;
-  depots?:Record<string,number>;
+  transferred: number;
+  effectiveAvailable: number;
+  depots: Record<string,number>;
+  stockBreakdown: Array<{
+    materialCode: string;
+    materialName: string;
+    quantity: number;
+    depots: Record<string,number>;
+  }>;
+  weeklyShortages: Array<{
+    weekId: string;
+    weekLabel: string;
+    quantity: number;
+    covered: number;
+    shortage: number;
+    remainingAvailable: number;
+  }>;
   shortage: number;
+};
+type LineTransferRecord = {
+  materialKey: string;
+  materialCode: string;
+  quantity: number;
+  updatedAt: string;
 };
 type CalculationStatusState = {
   running: boolean;
@@ -174,18 +198,57 @@ function depotLabel(depot:string){
   return labels[depot.trim().toUpperCase()]??depot;
 }
 
+function shortageCategoryLabel(category:string){
+  const normalized=category.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("es");
+  if(normalized.includes("capsul")||(/\btapa/.test(normalized)&&!normalized.includes("tapon")))return "Cápsulas / tapas";
+  if(normalized.includes("botell"))return "Botellas";
+  if(normalized.includes("tapon")||normalized.includes("corcho"))return "Tapones / corchos";
+  if(normalized.includes("caja")||normalized.includes("embal"))return "Cajas";
+  if(normalized.includes("etiquet")||normalized.includes("collarin"))return "Etiquetas";
+  if(normalized.includes("film")||normalized.includes("separador")||normalized.includes("pallet"))return "Embalaje auxiliar";
+  return category.trim()||"Otros";
+}
+
+function escapeReportHtml(value:string|number){
+  return String(value).replace(/[&<>"']/g,(character)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"})[character]??character);
+}
+
+function buildShortageReportHtml(items:ShortageRequirement[],sourceDate:string){
+  const order=["Cápsulas / tapas","Botellas","Tapones / corchos","Cajas","Etiquetas","Embalaje auxiliar","Otros"];
+  const grouped=new Map<string,ShortageRequirement[]>();
+  for(const item of items){const label=shortageCategoryLabel(item.category);const values=grouped.get(label)??[];values.push(item);grouped.set(label,values);}
+  const groups=[...grouped.entries()].sort(([left],[right])=>{const li=order.indexOf(left),ri=order.indexOf(right);return (li<0?999:li)-(ri<0?999:ri)||left.localeCompare(right);});
+  const number=(value:number)=>new Intl.NumberFormat("es-AR").format(value);
+  const generated=new Intl.DateTimeFormat("es-AR",{dateStyle:"long",timeStyle:"short"}).format(new Date());
+  const totalShortage=items.reduce((sum,item)=>sum+item.shortage,0);
+  const totalNeed=items.reduce((sum,item)=>sum+item.total,0);
+  const totalStock=items.reduce((sum,item)=>sum+item.available,0);
+  const totalTransferred=items.reduce((sum,item)=>sum+item.transferred,0);
+  const sections=groups.map(([label,values])=>`
+    <section class="category">
+      <header><div><span>TIPO DE INSUMO</span><h2>${escapeReportHtml(label)}</h2></div><strong>${values.length} insumos · faltante ${number(values.reduce((sum,item)=>sum+item.shortage,0))}</strong></header>
+      ${values.map(item=>`
+        <article class="material">
+          <div class="material-title"><div><h3>${escapeReportHtml(item.materialCode)} · ${escapeReportHtml(item.materialName)}</h3><p>${item.stockCodes.length>1?`Stock compartido entre ${item.stockCodes.map(escapeReportHtml).join(" + ")}`:"Código individual"}</p></div><b>${number(item.shortage)} ${escapeReportHtml(item.unit)} faltantes</b></div>
+          <div class="metrics"><div><span>Necesidad total</span><strong>${number(item.total)}</strong></div><div><span>Stock depósitos</span><strong>${number(item.available)}</strong></div><div><span>Trasladado a línea</span><strong>${number(item.transferred)}</strong></div><div class="danger"><span>Faltante total</span><strong>${number(item.shortage)}</strong></div></div>
+          <h4>Stock por código y depósito</h4>
+          <table><thead><tr><th>Código</th><th>Descripción</th><th>Total</th><th>Depósitos</th></tr></thead><tbody>${item.stockBreakdown.map(stockItem=>`<tr><td>${escapeReportHtml(stockItem.materialCode)}</td><td>${escapeReportHtml(stockItem.materialName)}</td><td>${number(stockItem.quantity)}</td><td>${Object.entries(stockItem.depots).map(([depot,quantity])=>`${escapeReportHtml(depotLabel(depot))}: ${number(quantity)}`).join(" · ")||"Sin stock"}</td></tr>`).join("")}</tbody></table>
+          <h4>Necesidad y faltante por semana</h4>
+          <table><thead><tr><th>Semana</th><th>Necesidad</th><th>Cubierto</th><th>Faltante</th><th>Saldo disponible</th></tr></thead><tbody>${item.weeklyShortages.map(week=>`<tr><td>${escapeReportHtml(week.weekLabel)}</td><td>${number(week.quantity)}</td><td>${number(week.covered)}</td><td class="danger-text">${number(week.shortage)}</td><td>${number(week.remainingAvailable)}</td></tr>`).join("")}</tbody></table>
+        </article>`).join("")}
+    </section>`).join("");
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Reporte de faltantes</title><style>
+  *{box-sizing:border-box}body{margin:0;background:#f3f6f7;color:#173044;font-family:Arial,sans-serif}.page{max-width:1180px;margin:0 auto;padding:32px}.hero{padding:28px;border-radius:18px;color:white;background:linear-gradient(135deg,#0d3349,#127c82)}.hero p{margin:5px 0 0;opacity:.82}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.kpis div,.metrics div{padding:15px;border:1px solid #dbe5e8;border-radius:12px;background:white}.kpis span,.metrics span{display:block;color:#657984;font-size:11px;text-transform:uppercase;letter-spacing:.05em}.kpis strong,.metrics strong{display:block;margin-top:5px;font-size:22px}.category{margin:22px 0}.category>header{display:flex;justify-content:space-between;align-items:end;padding:16px 20px;border-radius:14px 14px 0 0;color:white;background:#173f55}.category header span{font-size:9px;letter-spacing:.12em;opacity:.7}.category header h2{margin:3px 0 0}.category>header>strong{font-size:12px}.material{padding:20px;margin:0 0 12px;border:1px solid #d7e2e5;border-top:0;border-radius:0 0 14px 14px;background:white;page-break-inside:avoid}.material+.material{border-top:1px solid #d7e2e5;border-radius:14px}.material-title{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.material-title h3{margin:0;font-size:17px}.material-title p{margin:5px 0 0;color:#70818a;font-size:11px}.material-title>b{padding:9px 12px;border-radius:9px;color:#a12e26;background:#fdebea;white-space:nowrap}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.metrics .danger{border-color:#f0b4ae;background:#fff4f3}.metrics .danger strong,.danger-text{color:#b1322b}h4{margin:18px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#50707b}table{width:100%;border-collapse:collapse;font-size:11px}th{text-align:left;color:#60757f;background:#eef4f5}th,td{padding:9px;border-bottom:1px solid #e4ebed}footer{margin-top:24px;color:#6c7d84;font-size:10px;text-align:center}@media print{body{background:white}.page{max-width:none;padding:12mm}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}.category>header{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body><main class="page"><section class="hero"><small>ERP DE INSUMOS · REPORTE OPERATIVO</small><h1>Faltantes de insumos</h1><p>Programación leída: ${escapeReportHtml(sourceDate||"sin fecha")} · Generado: ${escapeReportHtml(generated)}</p></section><section class="kpis"><div><span>Insumos faltantes</span><strong>${items.length}</strong></div><div><span>Necesidad</span><strong>${number(totalNeed)}</strong></div><div><span>Stock + línea</span><strong>${number(totalStock+totalTransferred)}</strong></div><div><span>Faltante</span><strong>${number(totalShortage)}</strong></div></section>${sections}<footer>El stock compartido suma todos los códigos compatibles y detalla cada código por separado.</footer></main></body></html>`;
+}
+
 async function responseJson<T>(response:Response):Promise<T>{
   const text=await response.text();
   try{return JSON.parse(text) as T;}catch{throw new Error(response.status===503?"El servicio está ocupado. Se conservan los últimos datos válidos y se reintentará automáticamente.":`El servidor devolvió una respuesta inválida (${response.status}).`);}
 }
 
 function firstShortageWeek(item: ShortageRequirement) {
-  let accumulated = 0;
-  for (const week of item.weeks) {
-    accumulated += week.quantity;
-    if (accumulated > item.available) return week.weekLabel;
-  }
-  return item.weeks[0]?.weekLabel ?? "Sin semana";
+  return item.weeklyShortages.find((week)=>week.shortage>0)?.weekLabel??item.weeks[0]?.weekLabel??"Sin semana";
 }
 
 function Icon({
@@ -381,6 +444,11 @@ export default function Home() {
   const [requirementQuery, setRequirementQuery] = useState("");
   const [shortageQuery, setShortageQuery] = useState("");
   const [shortages, setShortages] = useState<ShortageRequirement[]>([]);
+  const [lineTransfers,setLineTransfers]=useState<LineTransferRecord[]>([]);
+  const lineTransfersRef=useRef<Record<string,number>>({});
+  const [transferDrafts,setTransferDrafts]=useState<Record<string,string>>({});
+  const [transferSaving,setTransferSaving]=useState("");
+  const [transferMessage,setTransferMessage]=useState("");
   const [requirementState, setRequirementState] = useState({
     loading: false,
     mapped: 0,
@@ -649,12 +717,20 @@ export default function Home() {
     const term = shortageQuery.trim().toLocaleLowerCase("es");
     return term
       ? shortages.filter((item) =>
-          `${item.materialCode} ${item.materialName} ${item.category} ${item.weeks.map((week) => week.weekLabel).join(" ")} ${item.products.map((product) => `${product.productCode} ${product.productName}`).join(" ")}`
+          `${item.materialCode} ${item.stockCodes.join(" ")} ${item.materialName} ${item.category} ${item.weeks.map((week) => week.weekLabel).join(" ")} ${item.products.map((product) => `${product.productCode} ${product.productName}`).join(" ")}`
             .toLocaleLowerCase("es")
             .includes(term),
         )
       : shortages;
   }, [shortages, shortageQuery]);
+  const shortageGroups=useMemo(()=>{
+    const order=["Cápsulas / tapas","Botellas","Tapones / corchos","Cajas","Etiquetas","Embalaje auxiliar","Otros"];
+    const grouped=new Map<string,ShortageRequirement[]>();
+    for(const item of visibleShortages){const label=shortageCategoryLabel(item.category);const values=grouped.get(label)??[];values.push(item);grouped.set(label,values);}
+    return [...grouped.entries()]
+      .map(([label,items])=>({label,items:items.sort((left,right)=>right.shortage-left.shortage||left.materialCode.localeCompare(right.materialCode)),totalShortage:items.reduce((sum,item)=>sum+item.shortage,0)}))
+      .sort((left,right)=>{const li=order.indexOf(left.label),ri=order.indexOf(right.label);return (li<0?999:li)-(ri<0?999:ri)||left.label.localeCompare(right.label);});
+  },[visibleShortages]);
   const visibleUsers = useMemo(() => {
     const term = userQuery.trim().toLocaleLowerCase("es");
     return term
@@ -741,6 +817,21 @@ export default function Home() {
       `${bomSuggestion.items.length} referencias encontradas en el Sheet. Revisá descripción y consumo antes de guardar.`,
     );
   };
+  const loadLineTransfers=useCallback(async()=>{
+    try{
+      const response=await fetch("/api/line-transfers",{cache:"no-store"});
+      const payload=await responseJson<{transfers?:LineTransferRecord[];error?:string}>(response);
+      if(!response.ok)throw new Error(payload.error||"No se pudieron leer los traslados a línea.");
+      const transfers=payload.transfers??[];
+      lineTransfersRef.current=Object.fromEntries(transfers.map(item=>[item.materialKey,Number(item.quantity)||0]));
+      setLineTransfers(transfers);
+      setTransferDrafts(current=>{const next={...current};for(const item of transfers)next[item.materialKey]=String(item.quantity);return next;});
+      return true;
+    }catch(error){
+      setTransferMessage(error instanceof Error?error.message:"No se pudieron leer los traslados a línea.");
+      return false;
+    }
+  },[]);
   const loadRequirements = useCallback(async () => {
     if(requirementsPromiseRef.current)return requirementsPromiseRef.current;
     const operation=(async()=>{
@@ -758,6 +849,7 @@ export default function Home() {
           recordsRef.current,
           bomProductsRef.current,
           stockRef.current,
+          lineTransfersRef.current,
         );
         setRequirements(payload.requirements);
         setShortages(payload.shortages);
@@ -815,6 +907,42 @@ export default function Home() {
       return false;
     }
   }, []);
+  const saveLineTransfer=async(materialKey:string,materialCode:string,rawValue?:string)=>{
+    const quantity=Number(rawValue??transferDrafts[materialKey]??0);
+    if(!Number.isFinite(quantity)||quantity<0){setTransferMessage("Ingresá una cantidad igual o mayor que cero.");return;}
+    setTransferSaving(materialKey);
+    setTransferMessage("");
+    try{
+      const response=await fetch("/api/line-transfers",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({materialKey,materialCode,quantity})});
+      const payload=await responseJson<{error?:string}>(response);
+      if(!response.ok)throw new Error(payload.error||"No se pudo guardar el traslado.");
+      await loadLineTransfers();
+      await loadRequirements();
+      setTransferMessage(quantity>0?`Traslado de ${formatNumber(quantity)} unidades guardado para ${materialCode}.`:`Se eliminó el traslado informado para ${materialCode}.`);
+    }catch(error){setTransferMessage(error instanceof Error?error.message:"No se pudo guardar el traslado.");}
+    finally{setTransferSaving("");}
+  };
+  const downloadShortageReport=()=>{
+    const html=buildShortageReportHtml(visibleShortages,sourceState.fetchedAt);
+    const blob=new Blob([html],{type:"text/html;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const anchor=document.createElement("a");
+    anchor.href=url;
+    anchor.download=`reporte-faltantes-${new Date().toISOString().slice(0,10)}.html`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+  const printShortageReport=()=>{
+    const reportWindow=window.open("","_blank","noopener,noreferrer");
+    if(!reportWindow){setTransferMessage("El navegador bloqueó la ventana del reporte. Habilitá las ventanas emergentes e intentá nuevamente.");return;}
+    reportWindow.document.open();
+    reportWindow.document.write(buildShortageReportHtml(visibleShortages,sourceState.fetchedAt));
+    reportWindow.document.close();
+    reportWindow.focus();
+    window.setTimeout(()=>reportWindow.print(),350);
+  };
   const saveStock = async () => {
     const r = await fetch("/api/stock", {
       method: "POST",
@@ -1130,7 +1258,7 @@ export default function Home() {
         running:true,
         phase:"Actualizando fichas técnicas y stock…",
       }));
-      const [bomsUpdated,stockUpdated]=await Promise.all([loadBoms(),loadStock()]);
+      const [bomsUpdated,stockUpdated,transfersUpdated]=await Promise.all([loadBoms(),loadStock(),loadLineTransfers()]);
 
       setCalculationStatus((current)=>({
         ...current,
@@ -1143,6 +1271,7 @@ export default function Home() {
         programResult.live?"programación actualizada":"última programación válida",
         bomsUpdated?"fichas técnicas actualizadas":"últimas fichas técnicas disponibles",
         stockUpdated?"stock actualizado":"último stock disponible",
+        transfersUpdated?"traslados a línea actualizados":"últimos traslados disponibles",
       ].join(" · ");
       setCalculationStatus((current)=>({
         ...current,
@@ -1154,7 +1283,7 @@ export default function Home() {
     })();
     fullRecalculationPromiseRef.current=operation;
     try{return await operation;}finally{if(fullRecalculationPromiseRef.current===operation)fullRecalculationPromiseRef.current=null;}
-  },[loadBoms,loadRequirements,loadStock,refreshProgram]);
+  },[loadBoms,loadLineTransfers,loadRequirements,loadStock,refreshProgram]);
   const saveSettings=async()=>{setSettingsMessage("Guardando…");try{const response=await fetch("/api/settings",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify(settingsDraft)});const payload=await responseJson<{settings?:OperationalSettings;error?:string}>(response);if(!response.ok||!payload.settings)throw new Error(payload.error||"No se pudo guardar.");setSettings(payload.settings);setSettingsDraft(payload.settings);setSettingsMessage("Configuración guardada en Cloudflare D1.");await synchronizeProgram(true,true);}catch(error){setSettingsMessage(error instanceof Error?error.message:"No se pudo guardar.");}};
 
   useEffect(() => {
@@ -1196,12 +1325,12 @@ export default function Home() {
       if(!active)return;
       await synchronizeProgram(false,false,"automatic");
       if(!active)return;
-      await Promise.all([loadBoms(), loadStock()]);
+      await Promise.all([loadBoms(), loadStock(), loadLineTransfers()]);
       if(!active)return;
       await loadRequirements();
     })();
     return()=>{active=false;};
-  }, [session, loadBoms, loadStock, loadRequirements,loadSettings,synchronizeProgram]);
+  }, [session, loadBoms, loadLineTransfers, loadStock, loadRequirements,loadSettings,synchronizeProgram]);
 
   const canAccess = (target: string) =>
     session?.role === "admin" ||
@@ -2912,6 +3041,19 @@ export default function Home() {
                 {requirementState.completed} operaciones tachadas en Google Sheets se consideran realizadas y fueron excluidas del cálculo de faltantes.
               </p>
             )}
+            {lineTransfers.length>0&&<details className="line-transfer-manager">
+              <summary>Traslados a línea informados ({lineTransfers.length})</summary>
+              <p>Estas cantidades se consideran disponibles aunque ya no aparezcan en los depósitos del archivo de stock.</p>
+              <div className="line-transfer-list">
+                {lineTransfers.map(transfer=><div className="line-transfer-row" key={transfer.materialKey}>
+                  <strong>{transfer.materialCode}</strong>
+                  <input type="number" min="0" step="1" value={transferDrafts[transfer.materialKey]??String(transfer.quantity)} onChange={event=>setTransferDrafts(current=>({...current,[transfer.materialKey]:event.target.value}))}/>
+                  <button disabled={transferSaving===transfer.materialKey} onClick={()=>void saveLineTransfer(transfer.materialKey,transfer.materialCode)}>Guardar</button>
+                  <button className="secondary-button" disabled={transferSaving===transfer.materialKey} onClick={()=>{setTransferDrafts(current=>({...current,[transfer.materialKey]:"0"}));void saveLineTransfer(transfer.materialKey,transfer.materialCode,"0");}}>Quitar</button>
+                </div>)}
+              </div>
+            </details>}
+            {transferMessage&&<p className="bom-message">{transferMessage}</p>}
             {requirementState.error ? (
               <p className="bom-message consumption-error">
                 {requirementState.error}
@@ -2930,55 +3072,66 @@ export default function Home() {
                 </p>
               </article>
             ) : (
-              <article className="table-card">
-                <div className="table-toolbar">
+              <div className="shortage-report-shell">
+                <div className="shortage-toolbar">
                   <div>
-                    <h2>Materiales faltantes</h2>
-                    <p>{visibleShortages.length} de {shortages.length} insumos</p>
+                    <h2>Faltantes agrupados por tipo de insumo</h2>
+                    <p>{visibleShortages.length} de {shortages.length} insumos · stock compartido y detalle semanal</p>
                   </div>
                   <label className="search-box">
                     <Icon name="search" />
-                    <input
-                      value={shortageQuery}
-                      onChange={(e) => setShortageQuery(e.target.value)}
-                      placeholder="Buscar insumo, producto o semana"
-                    />
+                    <input value={shortageQuery} onChange={(e)=>setShortageQuery(e.target.value)} placeholder="Buscar código, insumo, producto o semana"/>
                   </label>
+                  <button className="secondary-button report-button" onClick={downloadShortageReport}><Icon name="sheet"/> Descargar reporte</button>
+                  <button className="primary-button report-button" onClick={printShortageReport}>Imprimir / guardar PDF</button>
                 </div>
-                <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Tipo</th>
-                        <th>Insumo</th>
-                        <th>Necesidad</th>
-                        <th>Disponible</th>
-                        <th>Faltante</th>
-                        <th>Semana</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleShortages.map((item) => (
-                        <tr key={item.materialCode}>
-                          <td>{item.category}</td>
-                          <td>{item.materialCode} · {item.materialName}</td>
-                          <td>{formatNumber(item.total)}</td>
-                          <td>
-                            <strong>{formatNumber(item.available)}</strong>
-                            {Object.keys(item.depots??{}).length ? (
-                              <small className="cell-detail">
-                                {Object.entries(item.depots??{}).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")}
-                              </small>
-                            ) : null}
-                          </td>
-                          <td className="number-cell">{formatNumber(item.shortage)}</td>
-                          <td>{firstShortageWeek(item)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="shortage-groups">
+                  {shortageGroups.map(group=><section className="shortage-group" key={group.label}>
+                    <header className="shortage-group-header">
+                      <div><span>Tipo de insumo</span><h2>{group.label}</h2></div>
+                      <strong>{group.items.length} insumos · faltante total {formatNumber(group.totalShortage)}</strong>
+                    </header>
+                    <div className="shortage-group-body">
+                      {group.items.map(item=><article className="shortage-material" key={item.groupKey}>
+                        <div className="shortage-material-title">
+                          <div>
+                            <h3>{item.materialCode} · {item.materialName}</h3>
+                            <p>{item.stockCodes.length>1?`Stock compartido: ${item.stockCodes.join(" + ")}`:"Código individual"} · primer faltante: {firstShortageWeek(item)}</p>
+                          </div>
+                          <strong>{formatNumber(item.shortage)} {item.unit}</strong>
+                        </div>
+                        <div className="shortage-metrics">
+                          <div><span>Necesidad total</span><b>{formatNumber(item.total)}</b></div>
+                          <div><span>Stock en depósitos</span><b>{formatNumber(item.available)}</b><small>{Object.entries(item.depots).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")||"Sin stock cargado"}</small></div>
+                          <div className="line-moved"><span>Trasladado a línea</span><b>{formatNumber(item.transferred)}</b><small>Se suma a la disponibilidad</small></div>
+                          <div className="shortage-total"><span>Faltante total</span><b>{formatNumber(item.shortage)}</b><small>Necesidad − stock − trasladado</small></div>
+                        </div>
+                        <div className="line-transfer-editor">
+                          <label>
+                            Cantidad ya trasladada a la línea
+                            <input type="number" min="0" step="1" value={transferDrafts[item.groupKey]??String(item.transferred)} onChange={event=>setTransferDrafts(current=>({...current,[item.groupKey]:event.target.value}))}/>
+                          </label>
+                          <button className="primary-button" disabled={transferSaving===item.groupKey} onClick={()=>void saveLineTransfer(item.groupKey,item.materialCode)}>{transferSaving===item.groupKey?"Guardando…":"Guardar y recalcular"}</button>
+                        </div>
+                        <div className="shortage-detail-grid">
+                          <section>
+                            <h4>Stock por código</h4>
+                            <div className="table-scroll compact-table"><table><thead><tr><th>Código</th><th>Descripción</th><th>Stock total</th><th>Depósitos</th></tr></thead><tbody>
+                              {item.stockBreakdown.map(stockItem=><tr key={stockItem.materialCode}><td><strong>{stockItem.materialCode}</strong></td><td>{stockItem.materialName}</td><td>{formatNumber(stockItem.quantity)}</td><td>{Object.entries(stockItem.depots).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")||"Sin stock"}</td></tr>)}
+                            </tbody></table></div>
+                          </section>
+                          <section>
+                            <h4>Faltante por semana</h4>
+                            <div className="table-scroll compact-table"><table><thead><tr><th>Semana</th><th>Se ocupa</th><th>Cubierto</th><th>Faltante</th><th>Saldo disponible</th></tr></thead><tbody>
+                              {item.weeklyShortages.map(week=><tr key={week.weekId}><td><strong>{week.weekLabel}</strong></td><td>{formatNumber(week.quantity)}</td><td>{formatNumber(week.covered)}</td><td className={week.shortage>0?"number-cell":""}>{formatNumber(week.shortage)}</td><td>{formatNumber(week.remainingAvailable)}</td></tr>)}
+                            </tbody></table></div>
+                          </section>
+                        </div>
+                      </article>)}
+                    </div>
+                  </section>)}
                 </div>
-              </article>
+              </div>
             )}
           </section>
         )}

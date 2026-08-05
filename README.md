@@ -293,3 +293,11 @@ Los códigos alternativos deben estar cargados como sustitutos en la ficha técn
 ## Exportación Excel detallada de faltantes (v35)
 
 La descarga de Faltantes abre directamente la hoja **Reporte completo**, con una fila por insumo y semana. Incluye código o grupo, descripción, códigos compatibles, productos programados, necesidad semanal y total, cobertura, faltante semanal y total, stock combinado, stock por código, stock por depósito y cantidad trasladada a línea. Las hojas Resumen, Faltantes, Detalle semanal, Stock por código y las hojas por tipo de insumo se conservan como apoyo.
+
+
+## Impresión PDF sin pestaña en blanco (v38)
+
+- El reporte de faltantes se prepara dentro de un documento de impresión embebido y temporal.
+- El botón **Imprimir / guardar PDF** abre directamente el diálogo de impresión del navegador.
+- Ya no utiliza `window.open()` ni deja una pestaña `about:blank`.
+- Al finalizar o cancelar la impresión, el documento temporal se elimina automáticamente.

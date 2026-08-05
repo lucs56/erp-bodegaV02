@@ -1256,13 +1256,45 @@ export default function Home() {
     }
   };
   const printShortageReport=()=>{
-    const reportWindow=window.open("","_blank","noopener,noreferrer");
-    if(!reportWindow){setTransferMessage("El navegador bloqueó la ventana del reporte. Habilitá las ventanas emergentes e intentá nuevamente.");return;}
-    reportWindow.document.open();
-    reportWindow.document.write(buildShortageReportHtml(visibleShortages,sourceState.fetchedAt));
-    reportWindow.document.close();
-    reportWindow.focus();
-    window.setTimeout(()=>reportWindow.print(),350);
+    const previousFrame=document.getElementById("shortage-print-frame");
+    previousFrame?.remove();
+
+    const printFrame=document.createElement("iframe");
+    printFrame.id="shortage-print-frame";
+    printFrame.title="Reporte de faltantes para imprimir";
+    printFrame.setAttribute("aria-hidden","true");
+    printFrame.style.position="fixed";
+    printFrame.style.right="0";
+    printFrame.style.bottom="0";
+    printFrame.style.width="1px";
+    printFrame.style.height="1px";
+    printFrame.style.border="0";
+    printFrame.style.opacity="0";
+    printFrame.style.pointerEvents="none";
+
+    const cleanup=()=>{
+      window.setTimeout(()=>printFrame.remove(),250);
+    };
+
+    printFrame.addEventListener("load",async()=>{
+      try{
+        const printWindow=printFrame.contentWindow;
+        const printDocument=printFrame.contentDocument;
+        if(!printWindow||!printDocument)throw new Error("No se pudo preparar el reporte para imprimir.");
+        await printDocument.fonts?.ready;
+        printWindow.addEventListener("afterprint",cleanup,{once:true});
+        printWindow.focus();
+        printWindow.print();
+        setTransferMessage("Reporte abierto en el diálogo de impresión. Elegí Guardar como PDF para descargarlo.");
+        window.setTimeout(()=>{if(document.body.contains(printFrame))printFrame.remove();},120000);
+      }catch(error){
+        cleanup();
+        setTransferMessage(error instanceof Error?error.message:"No se pudo imprimir el reporte.");
+      }
+    },{once:true});
+
+    printFrame.srcdoc=buildShortageReportHtml(visibleShortages,sourceState.fetchedAt);
+    document.body.appendChild(printFrame);
   };
   const saveStock = async () => {
     const r = await fetch("/api/stock", {

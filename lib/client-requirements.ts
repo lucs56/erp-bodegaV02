@@ -28,6 +28,8 @@ export type ClientGroupedRequirement = MaterialRequirement & {
 };
 
 export type ClientShortageRequirement = ClientGroupedRequirement & {
+  originalTotal: number;
+  pendingNeed: number;
   available: number;
   transferred: number;
   effectiveAvailable: number;
@@ -42,6 +44,8 @@ export type ClientShortageRequirement = ClientGroupedRequirement & {
     weekId: string;
     weekLabel: string;
     quantity: number;
+    transferred: number;
+    pendingQuantity: number;
     covered: number;
     shortage: number;
     remainingAvailable: number;
@@ -221,17 +225,24 @@ function groupRequirements(
 
 function weeklyShortages(
   weeks: MaterialRequirement["weeks"],
-  effectiveAvailable: number,
+  transferred: number,
+  available: number,
 ) {
-  let remainingAvailable = Math.max(0, effectiveAvailable);
+  let remainingTransfer = Math.max(0, transferred);
+  let remainingAvailable = Math.max(0, available);
   return [...weeks]
     .sort((left, right) => left.weekId.localeCompare(right.weekId))
     .map((week) => {
-      const covered = Math.min(week.quantity, remainingAvailable);
-      const shortage = Math.max(0, week.quantity - covered);
-      remainingAvailable = Math.max(0, remainingAvailable - week.quantity);
+      const transferredToWeek = Math.min(week.quantity, remainingTransfer);
+      const pendingQuantity = Math.max(0, week.quantity - transferredToWeek);
+      remainingTransfer = Math.max(0, remainingTransfer - transferredToWeek);
+      const covered = Math.min(pendingQuantity, remainingAvailable);
+      const shortage = Math.max(0, pendingQuantity - covered);
+      remainingAvailable = Math.max(0, remainingAvailable - covered);
       return {
         ...week,
+        transferred: transferredToWeek,
+        pendingQuantity,
         covered,
         shortage,
         remainingAvailable,
@@ -242,7 +253,8 @@ function weeklyShortages(
 /**
  * Calcula consumos y faltantes con los datos que la interfaz ya descargó.
  * Los códigos sustitutos o compuestos comparten stock y se muestran como un
- * único grupo. El material ya trasladado a línea se suma a la disponibilidad.
+ * único grupo. El material ya trasladado a línea se resta una sola vez de la
+ * necesidad y luego el saldo pendiente se compara contra el stock.
  */
 export function calculateClientRequirements(
   records: ProgramRecord[],
@@ -285,17 +297,23 @@ export function calculateClientRequirements(
         (sum, stockItem) => sum + stockItem.quantity,
         0,
       );
-      const transferred = Math.max(0, Number(lineTransfers[item.groupKey]) || 0);
-      const effectiveAvailable = available + transferred;
+      const transferred = Math.min(
+        item.total,
+        Math.max(0, Number(lineTransfers[item.groupKey]) || 0),
+      );
+      const pendingNeed = Math.max(0, item.total - transferred);
+      const effectiveAvailable = available;
       return {
         ...item,
+        originalTotal: item.total,
+        pendingNeed,
         available,
         transferred,
         effectiveAvailable,
         depots,
         stockBreakdown,
-        weeklyShortages: weeklyShortages(item.weeks, effectiveAvailable),
-        shortage: Math.max(0, item.total - effectiveAvailable),
+        weeklyShortages: weeklyShortages(item.weeks, transferred, available),
+        shortage: Math.max(0, pendingNeed - available),
       };
     },
   );

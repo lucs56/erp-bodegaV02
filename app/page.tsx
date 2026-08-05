@@ -57,6 +57,8 @@ type Requirement = {
 type ShortageRequirement = Requirement & {
   groupKey: string;
   stockCodes: string[];
+  originalTotal: number;
+  pendingNeed: number;
   available: number;
   transferred: number;
   effectiveAvailable: number;
@@ -71,6 +73,8 @@ type ShortageRequirement = Requirement & {
     weekId: string;
     weekLabel: string;
     quantity: number;
+    transferred: number;
+    pendingQuantity: number;
     covered: number;
     shortage: number;
     remainingAvailable: number;
@@ -221,7 +225,8 @@ function buildShortageReportHtml(items:ShortageRequirement[],sourceDate:string){
   const number=(value:number)=>new Intl.NumberFormat("es-AR").format(value);
   const generated=new Intl.DateTimeFormat("es-AR",{dateStyle:"long",timeStyle:"short"}).format(new Date());
   const totalShortage=items.reduce((sum,item)=>sum+item.shortage,0);
-  const totalNeed=items.reduce((sum,item)=>sum+item.total,0);
+  const totalOriginalNeed=items.reduce((sum,item)=>sum+item.originalTotal,0);
+  const totalNeed=items.reduce((sum,item)=>sum+item.pendingNeed,0);
   const totalStock=items.reduce((sum,item)=>sum+item.available,0);
   const totalTransferred=items.reduce((sum,item)=>sum+item.transferred,0);
   const sections=groups.map(([label,values])=>`
@@ -230,16 +235,16 @@ function buildShortageReportHtml(items:ShortageRequirement[],sourceDate:string){
       ${values.map(item=>`
         <article class="material">
           <div class="material-title"><div><h3>${escapeReportHtml(item.materialCode)} · ${escapeReportHtml(item.materialName)}</h3><p>${item.stockCodes.length>1?`Stock compartido entre ${item.stockCodes.map(escapeReportHtml).join(" + ")}`:"Código individual"}</p></div><b>${number(item.shortage)} ${escapeReportHtml(item.unit)} faltantes</b></div>
-          <div class="metrics"><div><span>Necesidad total</span><strong>${number(item.total)}</strong></div><div><span>Stock depósitos</span><strong>${number(item.available)}</strong></div><div><span>Trasladado a línea</span><strong>${number(item.transferred)}</strong></div><div class="danger"><span>Faltante total</span><strong>${number(item.shortage)}</strong></div></div>
+          <div class="metrics"><div><span>Necesidad total</span><strong>${number(item.pendingNeed)}</strong><small>Original ${number(item.originalTotal)} − trasladado ${number(item.transferred)}</small></div><div><span>Stock depósitos</span><strong>${number(item.available)}</strong></div><div><span>Trasladado a línea</span><strong>${number(item.transferred)}</strong><small>Se resta una sola vez de la necesidad</small></div><div class="danger"><span>Faltante total</span><strong>${number(item.shortage)}</strong><small>Necesidad pendiente − stock</small></div></div>
           <h4>Stock por código y depósito</h4>
           <table><thead><tr><th>Código</th><th>Descripción</th><th>Total</th><th>Depósitos</th></tr></thead><tbody>${item.stockBreakdown.map(stockItem=>`<tr><td>${escapeReportHtml(stockItem.materialCode)}</td><td>${escapeReportHtml(stockItem.materialName)}</td><td>${number(stockItem.quantity)}</td><td>${Object.entries(stockItem.depots).map(([depot,quantity])=>`${escapeReportHtml(depotLabel(depot))}: ${number(quantity)}`).join(" · ")||"Sin stock"}</td></tr>`).join("")}</tbody></table>
           <h4>Necesidad y faltante por semana</h4>
-          <table><thead><tr><th>Semana</th><th>Necesidad</th><th>Cubierto</th><th>Faltante</th><th>Saldo disponible</th></tr></thead><tbody>${item.weeklyShortages.map(week=>`<tr><td>${escapeReportHtml(week.weekLabel)}</td><td>${number(week.quantity)}</td><td>${number(week.covered)}</td><td class="danger-text">${number(week.shortage)}</td><td>${number(week.remainingAvailable)}</td></tr>`).join("")}</tbody></table>
+          <table><thead><tr><th>Semana</th><th>Necesidad original</th><th>Trasladado</th><th>Necesidad pendiente</th><th>Cubierto por stock</th><th>Faltante</th><th>Saldo stock</th></tr></thead><tbody>${item.weeklyShortages.map(week=>`<tr><td>${escapeReportHtml(week.weekLabel)}</td><td>${number(week.quantity)}</td><td>${number(week.transferred)}</td><td>${number(week.pendingQuantity)}</td><td>${number(week.covered)}</td><td class="danger-text">${number(week.shortage)}</td><td>${number(week.remainingAvailable)}</td></tr>`).join("")}</tbody></table>
         </article>`).join("")}
     </section>`).join("");
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Reporte de faltantes</title><style>
   *{box-sizing:border-box}body{margin:0;background:#f3f6f7;color:#173044;font-family:Arial,sans-serif}.page{max-width:1180px;margin:0 auto;padding:32px}.hero{padding:28px;border-radius:18px;color:white;background:linear-gradient(135deg,#0d3349,#127c82)}.hero p{margin:5px 0 0;opacity:.82}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}.kpis div,.metrics div{padding:15px;border:1px solid #dbe5e8;border-radius:12px;background:white}.kpis span,.metrics span{display:block;color:#657984;font-size:11px;text-transform:uppercase;letter-spacing:.05em}.kpis strong,.metrics strong{display:block;margin-top:5px;font-size:22px}.category{margin:22px 0}.category>header{display:flex;justify-content:space-between;align-items:end;padding:16px 20px;border-radius:14px 14px 0 0;color:white;background:#173f55}.category header span{font-size:9px;letter-spacing:.12em;opacity:.7}.category header h2{margin:3px 0 0}.category>header>strong{font-size:12px}.material{padding:20px;margin:0 0 12px;border:1px solid #d7e2e5;border-top:0;border-radius:0 0 14px 14px;background:white;page-break-inside:avoid}.material+.material{border-top:1px solid #d7e2e5;border-radius:14px}.material-title{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.material-title h3{margin:0;font-size:17px}.material-title p{margin:5px 0 0;color:#70818a;font-size:11px}.material-title>b{padding:9px 12px;border-radius:9px;color:#a12e26;background:#fdebea;white-space:nowrap}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}.metrics .danger{border-color:#f0b4ae;background:#fff4f3}.metrics .danger strong,.danger-text{color:#b1322b}h4{margin:18px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#50707b}table{width:100%;border-collapse:collapse;font-size:11px}th{text-align:left;color:#60757f;background:#eef4f5}th,td{padding:9px;border-bottom:1px solid #e4ebed}footer{margin-top:24px;color:#6c7d84;font-size:10px;text-align:center}@media print{body{background:white}.page{max-width:none;padding:12mm}.hero{-webkit-print-color-adjust:exact;print-color-adjust:exact}.category>header{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-  </style></head><body><main class="page"><section class="hero"><small>ERP DE INSUMOS · REPORTE OPERATIVO</small><h1>Faltantes de insumos</h1><p>Programación leída: ${escapeReportHtml(sourceDate||"sin fecha")} · Generado: ${escapeReportHtml(generated)}</p></section><section class="kpis"><div><span>Insumos faltantes</span><strong>${items.length}</strong></div><div><span>Necesidad</span><strong>${number(totalNeed)}</strong></div><div><span>Stock + línea</span><strong>${number(totalStock+totalTransferred)}</strong></div><div><span>Faltante</span><strong>${number(totalShortage)}</strong></div></section>${sections}<footer>El stock compartido suma todos los códigos compatibles y detalla cada código por separado.</footer></main></body></html>`;
+  </style></head><body><main class="page"><section class="hero"><small>ERP DE INSUMOS · REPORTE OPERATIVO</small><h1>Faltantes de insumos</h1><p>Programación leída: ${escapeReportHtml(sourceDate||"sin fecha")} · Generado: ${escapeReportHtml(generated)}</p></section><section class="kpis"><div><span>Insumos faltantes</span><strong>${items.length}</strong></div><div><span>Necesidad original</span><strong>${number(totalOriginalNeed)}</strong></div><div><span>Necesidad pendiente</span><strong>${number(totalNeed)}</strong></div><div><span>Faltante</span><strong>${number(totalShortage)}</strong></div></section>${sections}<footer>El traslado se resta una sola vez de la necesidad. Luego el saldo pendiente se compara contra el stock compartido.</footer></main></body></html>`;
 }
 
 
@@ -333,7 +338,8 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
     CreatedDate:new Date(),
   };
   const generated=new Intl.DateTimeFormat("es-AR",{dateStyle:"long",timeStyle:"short"}).format(new Date());
-  const totalNeed=items.reduce((sum,item)=>sum+item.total,0);
+  const totalOriginalNeed=items.reduce((sum,item)=>sum+item.originalTotal,0);
+  const totalNeed=items.reduce((sum,item)=>sum+item.pendingNeed,0);
   const totalStock=items.reduce((sum,item)=>sum+item.available,0);
   const totalTransferred=items.reduce((sum,item)=>sum+item.transferred,0);
   const totalShortage=items.reduce((sum,item)=>sum+item.shortage,0);
@@ -356,8 +362,8 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
   const depotNames=[...new Set(items.flatMap((item)=>Object.keys(item.depots)))].sort((left,right)=>depotLabel(left).localeCompare(depotLabel(right),"es"));
   const completeHeaders=[
     "Tipo de insumo","Código / grupo","Descripción","Códigos compatibles","Unidad","Semana",
-    "Necesidad semana","Cubierto semana","Faltante semana","Saldo después de la semana",
-    "Necesidad total","Stock total del grupo","Trasladado a línea","Disponible total","Faltante total","Primer faltante",
+    "Necesidad original semana","Trasladado semana","Necesidad pendiente semana","Cubierto por stock","Faltante semana","Saldo stock después de la semana",
+    "Necesidad original total","Trasladado a línea","Necesidad pendiente total","Stock total del grupo","Faltante total","Primer faltante",
     "Productos programados","Stock detallado por código","Stock detallado por depósito",
     ...depotNames.map((depot)=>`Stock · ${depotLabel(depot)}`),
   ];
@@ -379,13 +385,13 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
         .map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`)
         .join(" | ")||"Sin stock";
       const weeks=item.weeklyShortages.length>0?item.weeklyShortages:[{
-        weekId:"sin-semana",weekLabel:"Sin semana",quantity:item.total,covered:Math.min(item.total,item.effectiveAvailable),shortage:item.shortage,remainingAvailable:Math.max(0,item.effectiveAvailable-item.total),
+        weekId:"sin-semana",weekLabel:"Sin semana",quantity:item.originalTotal,transferred:item.transferred,pendingQuantity:item.pendingNeed,covered:Math.min(item.pendingNeed,item.available),shortage:item.shortage,remainingAvailable:Math.max(0,item.available-item.pendingNeed),
       }];
       for(const week of weeks){
         completeRows.push([
           label,item.materialCode,item.materialName,item.stockCodes.join(" + "),item.unit,week.weekLabel,
-          week.quantity,week.covered,week.shortage,week.remainingAvailable,
-          item.total,item.available,item.transferred,item.effectiveAvailable,item.shortage,firstShortageWeek(item),
+          week.quantity,week.transferred,week.pendingQuantity,week.covered,week.shortage,week.remainingAvailable,
+          item.originalTotal,item.transferred,item.pendingNeed,item.available,item.shortage,firstShortageWeek(item),
           products,stockByCode,stockByDepot,
           ...depotNames.map((depot)=>item.depots[depot]??0),
         ]);
@@ -399,8 +405,8 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
     {s:{r:1,c:0},e:{r:1,c:completeHeaders.length-1}},
   ];
   completeLayout["!rows"]=[{hpt:28},{hpt:22},{hpt:8},{hpt:36}];
-  const completeWidths=[24,20,46,30,13,28,18,18,18,22,18,20,18,18,18,26,58,62,48,...depotNames.map(()=>20)];
-  const completeNumericColumns=[6,7,8,9,10,11,12,13,14,...depotNames.map((_,index)=>19+index)];
+  const completeWidths=[24,20,46,30,13,28,20,18,22,18,18,22,20,18,22,20,18,26,58,62,48,...depotNames.map(()=>20)];
+  const completeNumericColumns=[6,7,8,9,10,11,12,13,14,15,16,...depotNames.map((_,index)=>21+index)];
   formatExcelSheet(XLSX,complete,4,completeWidths,completeNumericColumns);
   applyExcelCellStyle(complete as Record<string,unknown>,"A1",{font:{bold:true,color:{rgb:"FFFFFF"},sz:16},fill:{patternType:"solid",fgColor:{rgb:"127C82"}},alignment:{horizontal:"left",vertical:"center"}});
   applyExcelCellStyle(complete as Record<string,unknown>,"A2",{font:{bold:true,color:{rgb:"FFFFFF"},sz:10},fill:{patternType:"solid",fgColor:{rgb:"173F55"}},alignment:{horizontal:"left",vertical:"center"}});
@@ -419,13 +425,13 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
         border:detailBorder,
       },isNumber?"#,##0":undefined);
     }
-    for(const column of [8,14]){
+    for(const column of [10,16]){
       applyExcelCellStyle(complete as Record<string,unknown>,XLSX.utils.encode_cell({r:row,c:column}),{
         font:{bold:true,color:{rgb:"A12E26"}},fill:{patternType:"solid",fgColor:{rgb:"FDEBEA"}},
         alignment:{horizontal:"right",vertical:"top",wrapText:true},border:detailBorder,
       },"#,##0");
     }
-    for(const column of [11,12,13]){
+    for(const column of [7,8,13,14,15]){
       applyExcelCellStyle(complete as Record<string,unknown>,XLSX.utils.encode_cell({r:row,c:column}),{
         font:{bold:true,color:{rgb:"165C46"}},fill:{patternType:"solid",fgColor:{rgb:"EAF7F1"}},
         alignment:{horizontal:"right",vertical:"top",wrapText:true},border:detailBorder,
@@ -442,62 +448,63 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
     [],
     ["Indicador","Cantidad"],
     ["Insumos faltantes",items.length],
-    ["Necesidad total",totalNeed],
-    ["Stock en depósitos",totalStock],
+    ["Necesidad original",totalOriginalNeed],
     ["Trasladado a línea",totalTransferred],
-    ["Stock + línea",totalStock+totalTransferred],
+    ["Necesidad pendiente",totalNeed],
+    ["Stock en depósitos",totalStock],
     ["Faltante total",totalShortage],
     [],
-    ["Tipo de insumo","Insumos","Necesidad","Stock","Trasladado","Faltante"],
+    ["Tipo de insumo","Insumos","Necesidad original","Trasladado","Necesidad pendiente","Stock","Faltante"],
     ...groups.map(([label,values])=>[
       label,
       values.length,
-      values.reduce((sum,item)=>sum+item.total,0),
-      values.reduce((sum,item)=>sum+item.available,0),
+      values.reduce((sum,item)=>sum+item.originalTotal,0),
       values.reduce((sum,item)=>sum+item.transferred,0),
+      values.reduce((sum,item)=>sum+item.pendingNeed,0),
+      values.reduce((sum,item)=>sum+item.available,0),
       values.reduce((sum,item)=>sum+item.shortage,0),
     ]),
   ];
   const summary=XLSX.utils.aoa_to_sheet(summaryRows);
   const summaryLayout=summary as import("xlsx").WorkSheet&ExcelSheetLayout;
-  summaryLayout["!cols"]=[{wch:31},{wch:22},{wch:18},{wch:18},{wch:18},{wch:18}];
-  summaryLayout["!merges"]=[{s:{r:0,c:0},e:{r:0,c:5}},{s:{r:1,c:0},e:{r:1,c:5}}];
+  summaryLayout["!cols"]=[{wch:31},{wch:22},{wch:20},{wch:18},{wch:20},{wch:18},{wch:18}];
+  summaryLayout["!merges"]=[{s:{r:0,c:0},e:{r:0,c:6}},{s:{r:1,c:0},e:{r:1,c:6}}];
   summaryLayout["!rows"]=[{hpt:24},{hpt:30}];
   applyExcelCellStyle(summary as Record<string,unknown>,"A1",{font:{bold:true,color:{rgb:"FFFFFF"},sz:12},fill:{patternType:"solid",fgColor:{rgb:"127C82"}},alignment:{horizontal:"left",vertical:"center"}});
   applyExcelCellStyle(summary as Record<string,unknown>,"A2",{font:{bold:true,color:{rgb:"FFFFFF"},sz:20},fill:{patternType:"solid",fgColor:{rgb:"173F55"}},alignment:{horizontal:"left",vertical:"center"}});
-  for(const address of ["A6","B6","A14","B14","C14","D14","E14","F14"]){
+  for(const address of ["A6","B6","A14","B14","C14","D14","E14","F14","G14"]){
     applyExcelCellStyle(summary as Record<string,unknown>,address,{font:{bold:true,color:{rgb:"FFFFFF"}},fill:{patternType:"solid",fgColor:{rgb:"173F55"}},alignment:{horizontal:"center",vertical:"center",wrapText:true}});
   }
   const summaryRange=XLSX.utils.decode_range(summary["!ref"]??"A1:A1");
   for(let row=6;row<=summaryRange.e.r;row+=1){
-    for(let column=1;column<=5;column+=1){
+    for(let column=1;column<=6;column+=1){
       applyExcelCellStyle(summary as Record<string,unknown>,XLSX.utils.encode_cell({r:row,c:column}),{alignment:{horizontal:"right",vertical:"center"}},"#,##0");
     }
   }
   XLSX.utils.book_append_sheet(workbook,summary,"Resumen");
 
   const consolidatedRows:Array<Array<string|number>>=[
-    ["Tipo de insumo","Código principal","Descripción","Códigos compatibles","Unidad","Necesidad total","Stock depósitos","Trasladado a línea","Disponible total","Faltante total","Primer faltante","Stock por depósito","Productos programados"],
+    ["Tipo de insumo","Código principal","Descripción","Códigos compatibles","Unidad","Necesidad original","Trasladado a línea","Necesidad pendiente","Stock depósitos","Faltante total","Primer faltante","Stock por depósito","Productos programados"],
     ...groups.flatMap(([label,values])=>values.map((item)=>[
-      label,item.materialCode,item.materialName,item.stockCodes.join(" + "),item.unit,item.total,item.available,item.transferred,item.effectiveAvailable,item.shortage,firstShortageWeek(item),
+      label,item.materialCode,item.materialName,item.stockCodes.join(" + "),item.unit,item.originalTotal,item.transferred,item.pendingNeed,item.available,item.shortage,firstShortageWeek(item),
       Object.entries(item.depots).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")||"Sin stock",
       item.products.map((product)=>`${product.productCode} · ${product.productName}: ${formatNumber(product.quantity)}`).join(" | ")||"Sin productos asociados",
     ])),
   ];
   const consolidated=XLSX.utils.aoa_to_sheet(consolidatedRows);
-  formatExcelSheet(XLSX,consolidated,1,[24,18,44,28,13,17,17,18,17,17,25,50,58],[5,6,7,8,9]);
+  formatExcelSheet(XLSX,consolidated,1,[24,18,44,28,13,19,18,20,18,18,25,50,58],[5,6,7,8,9]);
   XLSX.utils.book_append_sheet(workbook,consolidated,"Faltantes");
 
-  const weeklyRows:Array<Array<string|number>>=[["Tipo de insumo","Código principal","Descripción","Códigos compatibles","Semana","Se ocupa","Cubierto","Faltante","Saldo disponible","Necesidad total","Stock total","Trasladado a línea"]];
+  const weeklyRows:Array<Array<string|number>>=[["Tipo de insumo","Código principal","Descripción","Códigos compatibles","Semana","Necesidad original","Trasladado","Necesidad pendiente","Cubierto por stock","Faltante","Saldo stock","Necesidad original total","Trasladado total","Necesidad pendiente total","Stock total"]];
   for(const [label,values] of groups){
     for(const item of values){
       for(const week of item.weeklyShortages){
-        weeklyRows.push([label,item.materialCode,item.materialName,item.stockCodes.join(" + "),week.weekLabel,week.quantity,week.covered,week.shortage,week.remainingAvailable,item.total,item.available,item.transferred]);
+        weeklyRows.push([label,item.materialCode,item.materialName,item.stockCodes.join(" + "),week.weekLabel,week.quantity,week.transferred,week.pendingQuantity,week.covered,week.shortage,week.remainingAvailable,item.originalTotal,item.transferred,item.pendingNeed,item.available]);
       }
     }
   }
   const weekly=XLSX.utils.aoa_to_sheet(weeklyRows);
-  formatExcelSheet(XLSX,weekly,1,[24,18,44,28,26,16,16,16,18,18,18,18],[5,6,7,8,9,10,11]);
+  formatExcelSheet(XLSX,weekly,1,[24,18,44,28,26,18,16,19,18,16,18,20,18,20,18],[5,6,7,8,9,10,11,12,13,14]);
   XLSX.utils.book_append_sheet(workbook,weekly,"Detalle semanal");
 
   const stockRows:Array<Array<string|number>>=[["Grupo / código principal","Tipo de insumo","Código compatible","Descripción","Depósito","Stock","Stock total del grupo","Códigos compatibles"]];
@@ -524,29 +531,29 @@ async function exportShortagesToExcel(items:ShortageRequirement[],sourceDate:str
     const categoryDepotNames=[...new Set(values.flatMap((item)=>Object.keys(item.depots)))].sort();
     const weekNames=[...new Map(values.flatMap((item)=>item.weeklyShortages.map((week)=>[week.weekId,week.weekLabel] as const))).entries()];
     const headers=[
-      "Código principal","Descripción","Códigos compatibles","Unidad","Necesidad total","Stock depósitos","Trasladado a línea","Disponible total","Faltante total","Primer faltante","Productos programados","Stock detallado por código",
+      "Código principal","Descripción","Códigos compatibles","Unidad","Necesidad original","Trasladado a línea","Necesidad pendiente","Stock depósitos","Faltante total","Primer faltante","Productos programados","Stock detallado por código",
       ...categoryDepotNames.map((depot)=>`Stock ${depotLabel(depot)}`),
-      ...weekNames.flatMap(([,weekLabel])=>[`Se ocupa · ${weekLabel}`,`Cubierto · ${weekLabel}`,`Faltante · ${weekLabel}`,`Saldo · ${weekLabel}`]),
+      ...weekNames.flatMap(([,weekLabel])=>[`Necesidad original · ${weekLabel}`,`Trasladado · ${weekLabel}`,`Necesidad pendiente · ${weekLabel}`,`Cubierto por stock · ${weekLabel}`,`Faltante · ${weekLabel}`,`Saldo stock · ${weekLabel}`]),
     ];
     const rows:Array<Array<string|number>>=[headers];
     for(const item of values){
       const weeksById=new Map(item.weeklyShortages.map((week)=>[week.weekId,week]));
       rows.push([
-        item.materialCode,item.materialName,item.stockCodes.join(" + "),item.unit,item.total,item.available,item.transferred,item.effectiveAvailable,item.shortage,firstShortageWeek(item),
+        item.materialCode,item.materialName,item.stockCodes.join(" + "),item.unit,item.originalTotal,item.transferred,item.pendingNeed,item.available,item.shortage,firstShortageWeek(item),
         item.products.map((product)=>`${product.productCode} · ${product.productName}: ${formatNumber(product.quantity)}`).join(" | ")||"Sin productos asociados",
         item.stockBreakdown.map((stockItem)=>`${stockItem.materialCode}: ${formatNumber(stockItem.quantity)}`).join(" | ")||"Sin stock",
         ...categoryDepotNames.map((depot)=>item.depots[depot]??0),
         ...weekNames.flatMap(([weekId])=>{
           const week=weeksById.get(weekId);
-          return week?[week.quantity,week.covered,week.shortage,week.remainingAvailable]:[0,0,0,0];
+          return week?[week.quantity,week.transferred,week.pendingQuantity,week.covered,week.shortage,week.remainingAvailable]:[0,0,0,0,0,0];
         }),
       ]);
     }
     const categorySheet=XLSX.utils.aoa_to_sheet(rows);
-    const widths=[18,44,28,13,17,17,18,17,17,25,58,42,...categoryDepotNames.map(()=>19),...weekNames.flatMap(()=>[19,19,19,19])];
+    const widths=[18,44,28,13,19,18,20,18,18,25,58,42,...categoryDepotNames.map(()=>19),...weekNames.flatMap(()=>[20,18,21,20,19,19])];
     const numericColumns=[4,5,6,7,8,...categoryDepotNames.map((_,index)=>12+index),...weekNames.flatMap((_,index)=>{
-      const start=12+categoryDepotNames.length+(index*4);
-      return [start,start+1,start+2,start+3];
+      const start=12+categoryDepotNames.length+(index*6);
+      return [start,start+1,start+2,start+3,start+4,start+5];
     })];
     formatExcelSheet(XLSX,categorySheet,1,widths,numericColumns);
     XLSX.utils.book_append_sheet(workbook,categorySheet,uniqueExcelSheetName(label,usedSheetNames));
@@ -3415,10 +3422,10 @@ export default function Home() {
                           <strong>{formatNumber(item.shortage)} {item.unit}</strong>
                         </div>
                         <div className="shortage-metrics">
-                          <div><span>Necesidad total</span><b>{formatNumber(item.total)}</b></div>
+                          <div><span>Necesidad total</span><b>{formatNumber(item.pendingNeed)}</b><small>Original {formatNumber(item.originalTotal)} − trasladado {formatNumber(item.transferred)}</small></div>
                           <div><span>Stock en depósitos</span><b>{formatNumber(item.available)}</b><small>{Object.entries(item.depots).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")||"Sin stock cargado"}</small></div>
-                          <div className="line-moved"><span>Trasladado a línea</span><b>{formatNumber(item.transferred)}</b><small>Se suma a la disponibilidad</small></div>
-                          <div className="shortage-total"><span>Faltante total</span><b>{formatNumber(item.shortage)}</b><small>Necesidad − stock − trasladado</small></div>
+                          <div className="line-moved"><span>Trasladado a línea</span><b>{formatNumber(item.transferred)}</b><small>Se resta una sola vez de la necesidad</small></div>
+                          <div className="shortage-total"><span>Faltante total</span><b>{formatNumber(item.shortage)}</b><small>Necesidad pendiente − stock</small></div>
                         </div>
                         <div className="line-transfer-editor">
                           <label>
@@ -3436,8 +3443,8 @@ export default function Home() {
                           </section>
                           <section>
                             <h4>Faltante por semana</h4>
-                            <div className="table-scroll compact-table"><table><thead><tr><th>Semana</th><th>Se ocupa</th><th>Cubierto</th><th>Faltante</th><th>Saldo disponible</th></tr></thead><tbody>
-                              {item.weeklyShortages.map(week=><tr key={week.weekId}><td><strong>{week.weekLabel}</strong></td><td>{formatNumber(week.quantity)}</td><td>{formatNumber(week.covered)}</td><td className={week.shortage>0?"number-cell":""}>{formatNumber(week.shortage)}</td><td>{formatNumber(week.remainingAvailable)}</td></tr>)}
+                            <div className="table-scroll compact-table"><table><thead><tr><th>Semana</th><th>Necesidad original</th><th>Trasladado</th><th>Necesidad pendiente</th><th>Cubierto por stock</th><th>Faltante</th><th>Saldo stock</th></tr></thead><tbody>
+                              {item.weeklyShortages.map(week=><tr key={week.weekId}><td><strong>{week.weekLabel}</strong></td><td>{formatNumber(week.quantity)}</td><td>{formatNumber(week.transferred)}</td><td>{formatNumber(week.pendingQuantity)}</td><td>{formatNumber(week.covered)}</td><td className={week.shortage>0?"number-cell":""}>{formatNumber(week.shortage)}</td><td>{formatNumber(week.remainingAvailable)}</td></tr>)}
                             </tbody></table></div>
                           </section>
                         </div>

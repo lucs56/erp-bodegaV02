@@ -57,3 +57,25 @@ test("el traslado a línea reduce el faltante y se asigna cronológicamente por 
   assert.equal(adjusted.shortages[0].transferred,30);
   assert.deepEqual(adjusted.shortages[0].weeklyShortages.map(week=>week.shortage),[0,50]);
 });
+
+test("resta el traslado una sola vez de la necesidad antes de calcular el faltante",()=>{
+  const largeRecord={...record,bottles:817560} as never;
+  const base=calculateClientRequirements(
+    [largeRecord],
+    [{code:"P1",items:[{materialCode:"31043",materialName:"Cápsula / tapa",category:"Cápsulas",quantity:1,unit:"unidad",action:"FRACCIONAR",substitutes:[]}]}],
+    [{materialCode:"31043",materialName:"Cápsula / tapa",category:"Cápsulas",quantity:522662,unit:"unidad",depots:{"2":157590,C18:365072}}],
+  );
+  const key=base.comparedRequirements[0].groupKey;
+  const adjusted=calculateClientRequirements(
+    [largeRecord],
+    [{code:"P1",items:[{materialCode:"31043",materialName:"Cápsula / tapa",category:"Cápsulas",quantity:1,unit:"unidad",action:"FRACCIONAR",substitutes:[]}]}],
+    [{materialCode:"31043",materialName:"Cápsula / tapa",category:"Cápsulas",quantity:522662,unit:"unidad",depots:{"2":157590,C18:365072}}],
+    {[key]:100000},
+  );
+  const item=adjusted.comparedRequirements[0];
+  assert.equal(item.originalTotal,817560);
+  assert.equal(item.transferred,100000);
+  assert.equal(item.pendingNeed,717560);
+  assert.equal(item.shortage,194898);
+  assert.equal(item.weeklyShortages.reduce((sum,week)=>sum+week.pendingQuantity,0),717560);
+});

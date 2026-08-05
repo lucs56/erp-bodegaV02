@@ -1,5 +1,15 @@
 # ERP de Insumos para Bodega
 
+## Traslados descontados de la necesidad y PDF (v36)
+
+- **Cantidad ya trasladada a la línea** se resta una sola vez de la necesidad original.
+- La pantalla muestra como **Necesidad total** el saldo pendiente: `necesidad original - trasladado`.
+- El faltante se calcula después: `necesidad pendiente - stock en depósitos`, con mínimo cero.
+- El descuento se distribuye cronológicamente por semana para no repetirlo ni duplicarlo.
+- El reporte Excel usa la misma lógica e identifica necesidad original, traslado, necesidad pendiente, stock y faltante.
+- Se mantiene el botón **Imprimir / guardar PDF** con el diseño operativo anterior y los cálculos corregidos.
+- Ejemplo validado: `817.560 - 100.000 = 717.560`; con stock `522.662`, el faltante es `194.898`.
+
 ## Exportación Excel de faltantes (v34)
 
 - El botón **Descargar Excel** genera un archivo `.xlsx` con el mismo análisis operativo de la pantalla.

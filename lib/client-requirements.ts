@@ -305,6 +305,10 @@ export function calculateClientRequirements(
       const effectiveAvailable = available;
       return {
         ...item,
+        // Desde este punto `total` representa la necesidad que todavía falta
+        // atender. La necesidad original queda guardada por separado para
+        // auditoría y para mostrar cómo se obtuvo el valor ajustado.
+        total: pendingNeed,
         originalTotal: item.total,
         pendingNeed,
         available,

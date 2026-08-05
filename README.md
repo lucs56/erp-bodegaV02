@@ -1,5 +1,14 @@
 # ERP de Insumos para Bodega
 
+## Necesidad total ajustada por traslados (v37)
+
+- **Cantidad ya trasladada a la línea** modifica directamente la necesidad total pendiente.
+- Desde el motor de cálculo, `total` pasa a representar `necesidad original - trasladado`; así ninguna pantalla puede volver a mostrar la necesidad original como si siguiera pendiente.
+- El faltante se calcula solamente como `necesidad total ajustada - stock`, con mínimo cero.
+- El traslado no se suma al stock y no vuelve a restarse en el faltante.
+- Ejemplo: necesidad original `1.039.560`, traslado `100.000` → necesidad total `939.560`; con stock `522.662` → faltante `416.898`.
+- La misma regla se aplica al detalle semanal, Excel y PDF.
+
 ## Traslados descontados de la necesidad y PDF (v36)
 
 - **Cantidad ya trasladada a la línea** se resta una sola vez de la necesidad original.

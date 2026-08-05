@@ -235,7 +235,7 @@ function buildShortageReportHtml(items:ShortageRequirement[],sourceDate:string){
       ${values.map(item=>`
         <article class="material">
           <div class="material-title"><div><h3>${escapeReportHtml(item.materialCode)} · ${escapeReportHtml(item.materialName)}</h3><p>${item.stockCodes.length>1?`Stock compartido entre ${item.stockCodes.map(escapeReportHtml).join(" + ")}`:"Código individual"}</p></div><b>${number(item.shortage)} ${escapeReportHtml(item.unit)} faltantes</b></div>
-          <div class="metrics"><div><span>Necesidad total</span><strong>${number(item.pendingNeed)}</strong><small>Original ${number(item.originalTotal)} − trasladado ${number(item.transferred)}</small></div><div><span>Stock depósitos</span><strong>${number(item.available)}</strong></div><div><span>Trasladado a línea</span><strong>${number(item.transferred)}</strong><small>Se resta una sola vez de la necesidad</small></div><div class="danger"><span>Faltante total</span><strong>${number(item.shortage)}</strong><small>Necesidad pendiente − stock</small></div></div>
+          <div class="metrics"><div><span>Necesidad total</span><strong>${number(item.total)}</strong><small>Necesidad original ${number(item.originalTotal)} − trasladado ${number(item.transferred)}</small></div><div><span>Stock depósitos</span><strong>${number(item.available)}</strong></div><div><span>Trasladado a línea</span><strong>${number(item.transferred)}</strong><small>Descuenta directamente la necesidad total</small></div><div class="danger"><span>Faltante total</span><strong>${number(item.shortage)}</strong><small>Necesidad total ajustada − stock</small></div></div>
           <h4>Stock por código y depósito</h4>
           <table><thead><tr><th>Código</th><th>Descripción</th><th>Total</th><th>Depósitos</th></tr></thead><tbody>${item.stockBreakdown.map(stockItem=>`<tr><td>${escapeReportHtml(stockItem.materialCode)}</td><td>${escapeReportHtml(stockItem.materialName)}</td><td>${number(stockItem.quantity)}</td><td>${Object.entries(stockItem.depots).map(([depot,quantity])=>`${escapeReportHtml(depotLabel(depot))}: ${number(quantity)}`).join(" · ")||"Sin stock"}</td></tr>`).join("")}</tbody></table>
           <h4>Necesidad y faltante por semana</h4>
@@ -3364,7 +3364,7 @@ export default function Home() {
             )}
             {lineTransfers.length>0&&<details className="line-transfer-manager">
               <summary>Traslados a línea informados ({lineTransfers.length})</summary>
-              <p>Estas cantidades se consideran disponibles aunque ya no aparezcan en los depósitos del archivo de stock.</p>
+              <p>Estas cantidades se restan directamente de la necesidad total pendiente; no se suman al stock ni se vuelven a descontar del faltante.</p>
               <div className="line-transfer-list">
                 {lineTransfers.map(transfer=><div className="line-transfer-row" key={transfer.materialKey}>
                   <strong>{transfer.materialCode}</strong>
@@ -3422,10 +3422,10 @@ export default function Home() {
                           <strong>{formatNumber(item.shortage)} {item.unit}</strong>
                         </div>
                         <div className="shortage-metrics">
-                          <div><span>Necesidad total</span><b>{formatNumber(item.pendingNeed)}</b><small>Original {formatNumber(item.originalTotal)} − trasladado {formatNumber(item.transferred)}</small></div>
+                          <div><span>Necesidad total</span><b>{formatNumber(item.total)}</b><small>Necesidad original {formatNumber(item.originalTotal)} − trasladado {formatNumber(item.transferred)}</small></div>
                           <div><span>Stock en depósitos</span><b>{formatNumber(item.available)}</b><small>{Object.entries(item.depots).map(([depot,quantity])=>`${depotLabel(depot)}: ${formatNumber(quantity)}`).join(" · ")||"Sin stock cargado"}</small></div>
-                          <div className="line-moved"><span>Trasladado a línea</span><b>{formatNumber(item.transferred)}</b><small>Se resta una sola vez de la necesidad</small></div>
-                          <div className="shortage-total"><span>Faltante total</span><b>{formatNumber(item.shortage)}</b><small>Necesidad pendiente − stock</small></div>
+                          <div className="line-moved"><span>Trasladado a línea</span><b>{formatNumber(item.transferred)}</b><small>Descuenta directamente la necesidad total</small></div>
+                          <div className="shortage-total"><span>Faltante total</span><b>{formatNumber(item.shortage)}</b><small>Necesidad total ajustada − stock</small></div>
                         </div>
                         <div className="line-transfer-editor">
                           <label>

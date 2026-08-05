@@ -76,6 +76,7 @@ test("resta el traslado una sola vez de la necesidad antes de calcular el faltan
   assert.equal(item.originalTotal,817560);
   assert.equal(item.transferred,100000);
   assert.equal(item.pendingNeed,717560);
+  assert.equal(item.total,717560);
   assert.equal(item.shortage,194898);
   assert.equal(item.weeklyShortages.reduce((sum,week)=>sum+week.pendingQuantity,0),717560);
 });

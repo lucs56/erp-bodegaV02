@@ -12,8 +12,6 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_REQUEST_TIMEOUT_MS = 10_000;
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
-let cachedProgram:{value:LiveProgram;expiresAt:number}|null=null;
-let pendingProgram:Promise<LiveProgram|null>|null=null;
 
 export type LiveProgram = {
   spreadsheetId: string;
@@ -22,13 +20,46 @@ export type LiveProgram = {
   weeks: ParsedWeek[];
 };
 
-export async function readLiveProgram(force=false): Promise<LiveProgram | null> {
-  const settings=await readSettings();
-  if(!force&&cachedProgram&&cachedProgram.expiresAt>Date.now())return cachedProgram.value;
-  if(!force){const shared=await readSharedCache(settings.cacheSeconds);if(shared)return shared;}
-  if(pendingProgram)return pendingProgram;
-  pendingProgram=fetchLiveProgram(settings.spreadsheetId).then(async value=>{if(value){cachedProgram={value,expiresAt:Date.now()+settings.cacheSeconds*1000};await writeSharedCache(value);}return value;}).finally(()=>{pendingProgram=null;});
-  return pendingProgram;
+export async function readLiveProgram(force = false): Promise<LiveProgram | null> {
+    const settings = await readSettings();
+    // Siempre intentar devolver primero D1
+    if (!force) {
+        const cached = await readSharedCache(settings.cacheSeconds);
+        if (cached) {
+            void refreshInBackground(settings.spreadsheetId);
+            return cached;
+        }
+    }
+    const fresh = await fetchLiveProgram(settings.spreadsheetId);
+    if (fresh) {
+        await writeSharedCache(fresh);
+    }
+    return fresh;
+}
+
+let refreshPromise: Promise<void> | null = null;
+
+async function refreshInBackground(spreadsheetId: string) {
+
+    if (refreshPromise)
+        return;
+
+    refreshPromise = (async () => {
+
+        try {
+
+            const value = await fetchLiveProgram(spreadsheetId);
+
+            if (value)
+                await writeSharedCache(value);
+
+        } finally {
+
+            refreshPromise = null;
+
+        }
+
+    })();
 }
 
 async function readSharedCache(maxAgeSeconds:number){try{const db=await getD1Database();const row=await db.prepare("SELECT value,fetched_at FROM program_cache WHERE key = ?").bind("live").first<{value:string;fetched_at:string}>();if(row&&Date.now()-new Date(row.fetched_at).getTime()<maxAgeSeconds*1000)return JSON.parse(row.value) as LiveProgram;}catch{}return null;}

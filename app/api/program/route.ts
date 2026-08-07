@@ -17,7 +17,7 @@ export async function GET(request:Request) {
   }
   if (mode.get("background") === "1") {
     const stored = await readLastStoredProgram();
-    await scheduleBackgroundRefresh();
+    
     return stored
       ? liveResponse(
           stored,
@@ -27,7 +27,8 @@ export async function GET(request:Request) {
       : snapshotResponse("La primera lectura de Google Sheets se inició en segundo plano.");
   }
   try {
-    const live = await readLiveProgram(mode.get("fresh")==="1");
+    const force = mode.get("fresh") === "1";
+    const live = await readLiveProgram(force);
     if (live) {
       const records = live.weeks.flatMap((week) => week.records);
       return NextResponse.json(
